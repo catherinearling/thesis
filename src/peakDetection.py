@@ -1,0 +1,282 @@
+import sys
+import os #for file path handling
+import argparse
+
+from scipy.signal import find_peaks, medfilt
+import numpy as np
+import matplotlib.pyplot as plt
+
+import librosa
+import soundfile as sf
+
+
+# ================================================================
+# GLOBAL CONFIGURATION
+# ================================================================
+TOLERANCE = 0.1  # 100ms tolerance for matching predicted to actual throw
+SILENCE_DURATION = 5  # first 5 seconds assumed to be no activity
+
+PEAK_DETECTION_PARAMS = {
+    "height": 0.001,
+    "distance_sec": 0.1,  # minimum time between peaks in seconds
+    "prominence": 0.009
+}
+
+INTERVAL_BOUNDS = {
+    "min": 0.1,  # minimum allowed interval (seconds)
+    "max": 0.5   # maximum allowed interval (seconds)
+}
+
+
+#-----------------------------------------------------------------
+# Apply Short Time Fourier Transform for background noise reduction
+#       --breaks audio into small time windows and analyzes their frequencies
+#       --assumes that the first {silence_duration} seconds of given audio are no activity / "silence"
+#-----------------------------------------------------------------
+def reduceNoise(audio, sampling_rate, silence_duration=SILENCE_DURATION):
+    # S_full is the magnitude of each frequency at each time step; phase holds phase information for reconstructing audio later
+    S_full, phase = librosa.magphase(librosa.stft(audio)) #this separates mag and phase data
+
+    # Estimate background noise by calculating the mean power of the initial given seconds
+    # This assumes the first given seconds are "silence" (low noise), hence a good reference for noise power
+    noise_power = np.mean(S_full[:, :int(sampling_rate * silence_duration)], axis=1) #axis=1 ensures mean is calc for each freq band
+
+    # Create a binary mask that identifies significant audio regions (above noise power threshold)
+    #      a mask is a filter that IDs important data points
+    #      any val in S_full > corresponding noise power is true (keep it)
+    mask = S_full > noise_power[:, None]
+
+    # Convert boolean mask to float values (1 for True, 0 for False)
+    mask = mask.astype(float)
+
+    # median filter reduces noisy data by averaging values in a sliding window
+    # kernel_size=(1, 5) creates a filter that looks at 5 consecutive data points 
+    # for each frequency band
+    #reduce random background noise spikes while preserving peaks
+    mask = medfilt(mask, kernel_size=(1,5))
+
+    # apply mask to original data
+    S_clean = S_full * mask
+
+    # Inverse STFT to reconstruct cleaned audio by combining the filtered magnitude (S_clean) 
+    # with the original phase data (phase)
+    audio_clean = librosa.istft(S_clean * phase)
+
+    return audio_clean
+
+#------------------------------------------------------------
+# Analyze the timing intervals between detected peaks to estimate rhythmic juggling cycles
+# ----assumes the times are in order 
+#  paramters:
+# --peaks: indices of detected catch times / spikes
+# --time: time values corresponding to audio samples
+# --num_balls: number of balls being juggling (ex: 3 for cascade, 3 for 441 pattern)
+# --pattern_length: number throws per cycle (e.g. 3 for 441)
+#------------------------------------------------------------
+def analyzeIntervals(peaks, time, num_balls, pattern_length):
+    #put intervals btwn catches into data struct
+
+    #convert peak indices to times
+    catch_times = time[peaks]
+
+    if len(catch_times) == 0:
+        print("No peaks detected. Try adjusting noise reduction or peak detection params.")
+        return
+
+
+    # Expected reasonable min and max interval .1 seconds, max interval .5 seconds
+    min_interval = INTERVAL_BOUNDS["min"]
+    max_interval = INTERVAL_BOUNDS["max"]
+
+    # Identify catches outside expected bounds
+    #irregular_intervals = (intervals < min_interval) | (intervals > max_interval)
+
+    # ---------Estimate cycle length
+    # every ball must be thrown and caught once per cycle
+    # Rough estimate of cycle time based on initial catches
+    # this is considering every single spike as a catch time!!!
+    first_catch_time = catch_times[0]
+
+    accuracy = 0
+    predicted_cycles = []
+    predictions = 0
+    matches = 0
+
+    # Use multiple guesses for cycle durations based on different starting catch pairs
+    #consider each possible cycle length btwn ith catch and first catch -- start from i = pattern_length
+    for i in range(pattern_length, len(catch_times)):
+        cycle_duration_guess = catch_times[i] - first_catch_time
+
+        #if guess is within reasonable estimates, consider it
+        if(cycle_duration_guess <= (max_interval * pattern_length)) \
+            and (cycle_duration_guess >= (min_interval * pattern_length)):
+            # Predict where future cycles should occur based on this first cycle length
+            # Start at first detected cycle
+            index = i
+            predicted_cycle_starts = []
+            current_time = first_catch_time
+
+            #treating every spike as a catch -- estimated throw time is avg of every interval time
+            intervals = np.diff(catch_times)
+            avg_throw_length = np.mean(intervals)
+
+            # Predict cycle start times by stepping forward a cycle length in time
+            while current_time <= time[-1]: #this would end too early if we are missing peaks at end 
+                predicted_cycle_starts.append(current_time)
+                current_time += cycle_duration_guess
+
+
+            # Match predicted cycle starts to actual catches
+            total_matches = 0
+            predicted_cycle_starts = np.array(predicted_cycle_starts)
+            total_predictions = len(predicted_cycle_starts)
+
+            for predicted_time in predicted_cycle_starts:
+                # Check if any actual catch is within tolerance window
+                if np.any(np.abs(catch_times - predicted_time) <= TOLERANCE):
+                    total_matches += 1
+
+            curr_accuracy = ((total_matches *pattern_length) / len(catch_times)) if len(catch_times) > 0 else 0
+            
+            #keep this prediction if it has best accuracy so far, and is a valid accuracy (0 < acc < 1)
+                #valid accuracy means we are not overpredicting the amount of cycles nor underpredicting
+            if curr_accuracy > 0 and curr_accuracy < 1 and curr_accuracy > accuracy:
+                predicted_cycles = predicted_cycle_starts
+                accuracy = curr_accuracy
+                predictions = total_predictions
+                matches = total_matches
+        #if cycle is outside of reasonable bounds for time length, break out of for loop
+        else:
+            continue
+    
+    #only plot the best (in terms of accuracy) predictions we got
+    if accuracy > 0 and predicted_cycles.size > 0:
+        print(f"Total predicted cycle starts: {predictions}")
+        print(f"Matched cycle starts to detected catches: {matches}")
+        print(f"Accuracy: {accuracy*100:.2f}%\n") #not the best metric
+
+        # Plotting
+        plt.figure(figsize=(12, 5))
+
+        offset = 0.02  # tiny bump for predicted points
+
+        # Detetced catches (blue dots at 0)
+        plt.scatter(catch_times, np.zeros_like(catch_times), label='Detected Catches', color='blue', marker='.')
+
+        # Predicted cycles (red crosses slightly above)
+        plt.scatter(predicted_cycles, np.full_like(predicted_cycles, offset), label='Predicted Cycle Starts', color='red', marker='.')
+
+        # Highlight matches
+        for predicted_time in predicted_cycles:
+            close_matches = np.abs(catch_times - predicted_time) <= TOLERANCE
+            if np.any(close_matches):
+                actual_match_time = catch_times[close_matches][0]
+                plt.plot([actual_match_time, predicted_time], [0, offset], color='green', linestyle='--', linewidth=1)
+
+        plt.legend()
+        plt.xlabel('Time (seconds)')
+        plt.title('Estimated Cycle Starts/Ends vs Detected Catch Times')
+        plt.yticks([])
+
+        # FORCE a tight vertical range
+        plt.ylim(-0.05, 0.07)   # <<< prevents huge empty space
+
+        plt.show()
+    else:
+        print("could not find any valid cycle guesses")
+
+
+
+def plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, original_peaks, clean_peaks):
+    #Visualization--------------------------------------------------------------------
+    # Visualize both graphs with detected peaks side by side
+    fig, ax = plt.subplots(1, 2, figsize=(12, 5))  # Two graphs side by side
+
+    # Cleaned audio
+    ax[0].plot(time_clean, audio_clean)
+    ax[0].plot(time_clean[clean_peaks], audio_clean[clean_peaks], "x", color='red')
+    ax[0].set_title("Detected Peaks (Cleaned & Trimmed Audio)")
+    ax[0].set_xlabel("Time (seconds)")
+    ax[0].set_ylabel("Amplitude")
+
+    # Original audio
+    ax[1].plot(time, audio)
+    ax[1].plot(time[original_peaks], audio[original_peaks], "x", color='red')
+    ax[1].set_title("Detected Peaks (Original Audio)")
+    ax[1].set_xlabel("Time (seconds)")
+    ax[1].set_ylabel("Amplitude")
+
+    plt.tight_layout()
+    plt.show()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Analyze rhythmic patterns in juggling audio.")
+    parser.add_argument("--file", required=True, help="Name of audio file located in the /data folder. First 5 seconds should be no activity.")
+    parser.add_argument("--balls", type=int, required=True, help="Number of balls being juggled")
+    parser.add_argument("--pattern", type=int, required=True, help="Pattern length (e.g., 3 for 441 pattern)")
+    parser.add_argument("--silence", type=int, required=False, help="Duration of initial silence in seconds (default: 5)",default=SILENCE_DURATION)
+    return parser.parse_args()
+
+
+# how to run from cmd line:
+#   python peakDetection.py --file hamerly_juggling_441.wav --balls 3 --pattern 3
+def main():
+    args = parse_args()
+    filename = args.file
+    num_balls = args.balls
+    pattern_length = args.pattern
+    silence_duration = args.silence
+
+    # Load audio file -- the first 5 seconds are no juggling
+    audio_path = os.path.join(os.getcwd(), "data", filename)
+
+    if not os.path.exists(audio_path):
+        print(f"File '{filename}' not found in /data.")
+        return
+
+    #sr=None preserves file's original sampling rate
+    audio, sampling_rate = librosa.load(audio_path, sr=None)
+    
+    #background noise reduction
+    audio_clean = reduceNoise(audio, sampling_rate, silence_duration)
+
+    #remove any silence at the beginning (specified by user, default is 5 seconds)
+    num_samples = int(sampling_rate * silence_duration)
+    audio_clean = audio_clean[num_samples:]
+
+    # Save the cleaned audio to a new file for debugging
+    sf.write('clean.wav', audio_clean, sampling_rate)
+
+    #---------------------------------------------------------------------------
+
+    # Convert sample indices to time values for x-axis 
+    time_clean = (np.arange(len(audio_clean)) + num_samples) / sampling_rate
+    time = np.arange(len(audio)) / (sampling_rate)
+
+
+    # Detect peaks (using time-based distance) for cleaned vs not audio. using these parameter values
+    # based on results with test data
+    # - height=0.001 ensures peaks have a minimum amplitude of 0.001
+    # - distance=int(samplingRate * 0.1) ensures peaks are at least 0.1 seconds apart
+    # - prominence=0.009 ensures peaks must stand out by at least 0.009 relative to their surroundings
+    clean_peaks, properties = find_peaks(
+        audio_clean,
+        height= PEAK_DETECTION_PARAMS["height"],
+        distance=int(sampling_rate * PEAK_DETECTION_PARAMS["distance_sec"]),
+        prominence= PEAK_DETECTION_PARAMS["prominence"]
+    )
+    original_peaks, _ = find_peaks(
+        audio, 
+        height= PEAK_DETECTION_PARAMS["height"], 
+        distance=int(sampling_rate * PEAK_DETECTION_PARAMS["distance_sec"]), 
+        prominence= PEAK_DETECTION_PARAMS["prominence"]
+    )
+
+    #plot and analyze intervals
+    analyzeIntervals(clean_peaks, time_clean, num_balls, pattern_length)
+
+    plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, original_peaks, clean_peaks)
+
+if __name__ == "__main__":
+    main()
