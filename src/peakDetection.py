@@ -17,9 +17,9 @@ TOLERANCE = 0.1  # 100ms tolerance for matching predicted to actual throw
 SILENCE_DURATION = 5  # first 5 seconds assumed to be no activity
 
 PEAK_DETECTION_PARAMS = {
-    "height": 0.001,
+    "height": 0.001,  # minimum height of peaks
     "distance_sec": 0.1,  # minimum time between peaks in seconds
-    "prominence": 0.009
+    "prominence": 0.004 # how much a peak has to "stand out" relative to its surroundings
 }
 
 INTERVAL_BOUNDS = {
@@ -70,14 +70,14 @@ def reduceNoise(audio, sampling_rate, silence_duration=SILENCE_DURATION):
 #  paramters:
 # --peaks: indices of detected catch times / spikes
 # --time: time values corresponding to audio samples
-# --num_balls: number of balls being juggling (ex: 3 for cascade, 3 for 441 pattern)
 # --pattern_length: number throws per cycle (e.g. 3 for 441)
 #------------------------------------------------------------
-def analyzeIntervals(peaks, time, num_balls, pattern_length):
+def analyzeIntervals(peaks, time, pattern_length):
     #put intervals btwn catches into data struct
 
     #convert peak indices to times
     catch_times = time[peaks]
+    print(f"Detected {len(catch_times)} catch times.")
 
     if len(catch_times) == 0:
         print("No peaks detected. Try adjusting noise reduction or peak detection params.")
@@ -213,18 +213,17 @@ def plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, ori
 def parse_args():
     parser = argparse.ArgumentParser(description="Analyze rhythmic patterns in juggling audio.")
     parser.add_argument("--file", required=True, help="Name of audio file located in the /data folder. First 5 seconds should be no activity.")
-    parser.add_argument("--balls", type=int, required=True, help="Number of balls being juggled")
+    parser.add_argument("--balls", type=int, required=False, help="Number of balls being juggled")
     parser.add_argument("--pattern", type=int, required=True, help="Pattern length (e.g., 3 for 441 pattern)")
     parser.add_argument("--silence", type=int, required=False, help="Duration of initial silence in seconds (default: 5)",default=SILENCE_DURATION)
     return parser.parse_args()
 
 
 # how to run from cmd line:
-#   python peakDetection.py --file hamerly_juggling_441.wav --balls 3 --pattern 3
+#   python peakDetection.py --file hamerly_juggling_441.wav --pattern 3
 def main():
     args = parse_args()
     filename = args.file
-    num_balls = args.balls
     pattern_length = args.pattern
     silence_duration = args.silence
 
@@ -257,9 +256,9 @@ def main():
 
     # Detect peaks (using time-based distance) for cleaned vs not audio. using these parameter values
     # based on results with test data
-    # - height=0.001 ensures peaks have a minimum amplitude of 0.001
+    # - height ensures peaks have a minimum amplitude
     # - distance=int(samplingRate * 0.1) ensures peaks are at least 0.1 seconds apart
-    # - prominence=0.009 ensures peaks must stand out by at least 0.009 relative to their surroundings
+    # - prominence ensures peaks must stand out by at least "prominence" relative to their surroundings
     clean_peaks, properties = find_peaks(
         audio_clean,
         height= PEAK_DETECTION_PARAMS["height"],
@@ -274,7 +273,7 @@ def main():
     )
 
     #plot and analyze intervals
-    analyzeIntervals(clean_peaks, time_clean, num_balls, pattern_length)
+    analyzeIntervals(clean_peaks, time_clean, pattern_length)
 
     plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, original_peaks, clean_peaks)
 
