@@ -213,7 +213,6 @@ def plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, ori
 def parse_args():
     parser = argparse.ArgumentParser(description="Analyze rhythmic patterns in juggling audio.")
     parser.add_argument("--file", required=True, help="Name of audio file located in the /data folder. First 5 seconds should be no activity.")
-    parser.add_argument("--balls", type=int, required=False, help="Number of balls being juggled")
     parser.add_argument("--pattern", type=int, required=True, help="Pattern length (e.g., 3 for 441 pattern)")
     parser.add_argument("--silence", type=int, required=False, help="Duration of initial silence in seconds (default: 5)",default=SILENCE_DURATION)
     return parser.parse_args()
@@ -265,7 +264,8 @@ def main():
         distance=int(sampling_rate * PEAK_DETECTION_PARAMS["distance_sec"]),
         prominence= PEAK_DETECTION_PARAMS["prominence"]
     )
-    original_peaks, _ = find_peaks(
+
+    original_peaks, properties = find_peaks(
         audio, 
         height= PEAK_DETECTION_PARAMS["height"], 
         distance=int(sampling_rate * PEAK_DETECTION_PARAMS["distance_sec"]), 
