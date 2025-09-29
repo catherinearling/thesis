@@ -82,7 +82,10 @@ def analyzeIntervals(peaks, time, pattern_length):
     if len(catch_times) == 0:
         print("No peaks detected. Try adjusting noise reduction or peak detection params.")
         return
-
+    if len(catch_times) < pattern_length:
+        print(f"Not enough catches detected for pattern length {pattern_length}. Either more data is needed for analyzation, \
+              or try adjusting noise reduction or peak detection params.")
+        return
 
     # Expected reasonable min and max interval .1 seconds, max interval .5 seconds
     min_interval = INTERVAL_BOUNDS["min"]
@@ -136,7 +139,7 @@ def analyzeIntervals(peaks, time, pattern_length):
                 if np.any(np.abs(catch_times - predicted_time) <= TOLERANCE):
                     total_matches += 1
 
-            curr_accuracy = ((total_matches *pattern_length) / len(catch_times)) if len(catch_times) > 0 else 0
+            curr_accuracy = (total_matches *pattern_length) / len(catch_times)
             
             #keep this prediction if it has best accuracy so far, and is a valid accuracy (0 < acc < 1)
                 #valid accuracy means we are not overpredicting the amount of cycles nor underpredicting
@@ -153,7 +156,7 @@ def analyzeIntervals(peaks, time, pattern_length):
     if accuracy > 0 and predicted_cycles.size > 0:
         print(f"Total predicted cycle starts: {predictions}")
         print(f"Matched cycle starts to detected catches: {matches}")
-        print(f"Accuracy: {accuracy*100:.2f}%\n") #not the best metric
+        print(f"Accuracy: {accuracy*100:.2f}%\n")
 
         # Plotting
         plt.figure(figsize=(12, 5))
