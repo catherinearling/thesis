@@ -28,6 +28,34 @@ INTERVAL_BOUNDS = {
 }
 
 
+def longest_common_subsequence(seq1, seq2, tolerance=TOLERANCE):
+    m, n = len(seq1), len(seq2)
+
+    # Create a 2D array to store lengths of LCS
+    #   a 2D DP (dynamic programming) table 
+    # where dp[i][j] 
+    # represents the LCS length between 
+    # the first i elements of seq1 
+    # and the first j elements of seq2.
+    dp = np.zeros((m + 1, n + 1))
+
+    # Fill dp array
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if abs(seq1[i - 1] - seq2[j - 1]) <= tolerance:
+                # if the two catches are within the tolerance, they are considered a match
+                # so we extend the LCS found so far by 1
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                #otherwise, carry forward the max LCS found by 
+                # either ignoring the current element of seq1 or seq2
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+
+
+    return int(dp[m][n])
+
+
+
 #-----------------------------------------------------------------
 # Apply Short Time Fourier Transform for background noise reduction
 #       --breaks audio into small time windows and analyzes their frequencies
@@ -115,32 +143,32 @@ def analyzeIntervals(peaks, time, pattern_length):
             and (cycle_duration_guess >= (min_interval * pattern_length)):
             # Predict where future cycles should occur based on this first cycle length
             # Start at first detected cycle
-            index = i
             predicted_cycle_starts = []
             current_time = first_catch_time
-
-            #treating every spike as a catch -- estimated throw time is avg of every interval time
-            intervals = np.diff(catch_times)
-            avg_throw_length = np.mean(intervals)
+            total_matches = 0
 
             # Predict cycle start times by stepping forward a cycle length in time
             while current_time <= time[-1]: #this would end too early if we are missing peaks at end 
                 predicted_cycle_starts.append(current_time)
-                current_time += cycle_duration_guess
+                
+                # Find the index of the closest actual catch time to the current time/next predicted cycle start
+                index = np.argmin(np.abs(catch_times - current_time))
+                closest_catch_time = catch_times[index]
+                diff = np.abs(closest_catch_time - current_time)
 
-
-            # Match predicted cycle starts to actual catches
-            total_matches = 0
-            predicted_cycle_starts = np.array(predicted_cycle_starts)
-            total_predictions = len(predicted_cycle_starts)
-
-            for predicted_time in predicted_cycle_starts:
-                # Check if any actual catch is within tolerance window
-                if np.any(np.abs(catch_times - predicted_time) <= TOLERANCE):
+                # adjust how much we advance by if our next predicted cycle start is close to an actual catch time
+                if diff <= TOLERANCE:
                     total_matches += 1
+                    current_time = closest_catch_time + cycle_duration_guess
+                else:
+                    # otherwise, just advance by our cycle duration guess to try to find next catch
+                    current_time += cycle_duration_guess
 
+            total_predictions = len(predicted_cycle_starts)
             curr_accuracy = (total_matches *pattern_length) / len(catch_times)
             
+            # maybe do accuracy score as LCS instead here ?
+
             #keep this prediction if it has best accuracy so far, and is a valid accuracy (0 < acc < 1)
                 #valid accuracy means we are not overpredicting the amount of cycles nor underpredicting
             if curr_accuracy > 0 and curr_accuracy < 1 and curr_accuracy > accuracy:
