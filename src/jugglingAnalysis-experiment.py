@@ -76,6 +76,7 @@ def longest_common_subsequence(seq1, seq2, tolerance=TOLERANCE):
 # --pattern: the siteswap pattern (441, 3, 531, etc)
 #------------------------------------------------------------
 def analyzeIntervals(peaks, time, pattern):
+    pattern_length = len(str(pattern))
     #put intervals btwn catches into data struct
 
     #convert peak indices to times
@@ -85,7 +86,7 @@ def analyzeIntervals(peaks, time, pattern):
     if len(catch_times) == 0:
         print("No peaks detected. Try adjusting noise reduction or peak detection params.")
         return
-    if len(catch_times) < len(str(pattern)):
+    if len(catch_times) < pattern_length:
         print(f"Not enough catches detected for pattern {pattern}. Either more data is needed for analyzation, \
               or try adjusting noise reduction or peak detection params.")
         return
@@ -111,12 +112,12 @@ def analyzeIntervals(peaks, time, pattern):
 
     # Use multiple guesses for cycle durations based on different starting catch pairs
     #consider each possible cycle length btwn ith catch and first catch -- start from i = pattern
-    for i in range(pattern, len(catch_times)):
+    for i in range(pattern_length, len(catch_times)):
         cycle_duration_guess = catch_times[i] - first_catch_time
 
         #if guess is within reasonable estimates, consider it
-        if(cycle_duration_guess <= (max_interval * pattern)) \
-            and (cycle_duration_guess >= (min_interval * pattern)):
+        if(cycle_duration_guess <= (max_interval * pattern_length)) \
+            and (cycle_duration_guess >= (min_interval * pattern_length)):
             # Predict where future cycles should occur based on this first cycle length
             # Start at first detected cycle
             predicted_cycle_starts = []
@@ -124,7 +125,7 @@ def analyzeIntervals(peaks, time, pattern):
             total_matches = 0
 
             # Predict cycle start times by stepping forward a cycle length in time
-            while current_time <= time[-1]: #this would end too early if we are missing peaks at end 
+            while current_time <= catch_times[-1]: #this would end too early if we are missing peaks at end 
                 predicted_cycle_starts.append(current_time)
                 
                 # Find the index of the closest actual catch time to the current time
@@ -281,7 +282,7 @@ def plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, ori
 def parse_args():
     parser = argparse.ArgumentParser(description="Analyze rhythmic patterns in juggling audio.")
     parser.add_argument("--file", required=True, help="Name of audio file located in the /data folder. First 5 seconds should be no activity.")
-    parser.add_argument("--pattern", type=int, required=True, help="Pattern length (e.g., 3 for 441 pattern)")
+    parser.add_argument("--pattern", type=int, required=True, help="Vanilla siteswap pattern(441, 51, etc)")
     parser.add_argument("--silence", type=int, required=False, help="Duration of initial silence in seconds (default: 5)",default=SILENCE_DURATION)
     return parser.parse_args()
 

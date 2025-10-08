@@ -24,7 +24,7 @@ PEAK_DETECTION_PARAMS = {
 
 INTERVAL_BOUNDS = {
     "min": 0.1,  # minimum allowed interval (seconds)
-    "max": 0.5   # maximum allowed interval (seconds)
+    "max": 0.4   # maximum allowed interval (seconds)
 }
 
 
@@ -98,9 +98,10 @@ def reduceNoise(audio, sampling_rate, silence_duration=SILENCE_DURATION):
 #  paramters:
 # --peaks: indices of detected catch times / spikes
 # --time: time values corresponding to audio samples
-# --pattern_length: number throws per cycle (e.g. 3 for 441)
+# --pattern: vanilla siteswap pattern (like 441, 51)
 #------------------------------------------------------------
-def analyzeIntervals(peaks, time, pattern_length):
+def analyzeIntervals(peaks, time, pattern):
+    pattern_length = len(str(pattern))
     #put intervals btwn catches into data struct
 
     #convert peak indices to times
@@ -148,7 +149,7 @@ def analyzeIntervals(peaks, time, pattern_length):
             total_matches = 0
 
             # Predict cycle start times by stepping forward a cycle length in time
-            while current_time <= time[-1]: #this would end too early if we are missing peaks at end 
+            while current_time <= catch_times[-1]: #this would end too early if we are missing peaks at end 
                 predicted_cycle_starts.append(current_time)
                 
                 # Find the index of the closest actual catch time to the current time/next predicted cycle start
@@ -181,7 +182,7 @@ def analyzeIntervals(peaks, time, pattern_length):
             continue
     
     #only plot the best (in terms of accuracy) predictions we got
-    if accuracy > 0 and predicted_cycles.size > 0:
+    if accuracy > 0 and len(predicted_cycles) > 0:
         print(f"Total predicted cycle starts: {predictions}")
         print(f"Matched cycle starts to detected catches: {matches}")
         print(f"Accuracy: {accuracy*100:.2f}%\n")
@@ -244,7 +245,7 @@ def plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, ori
 def parse_args():
     parser = argparse.ArgumentParser(description="Analyze rhythmic patterns in juggling audio.")
     parser.add_argument("--file", required=True, help="Name of audio file located in the /data folder. First 5 seconds should be no activity.")
-    parser.add_argument("--pattern", type=int, required=True, help="Pattern length (e.g., 3 for 441 pattern)")
+    parser.add_argument("--pattern", type=int, required=True, help="Vanilla siteswap pattern (like 441, 51)")
     parser.add_argument("--silence", type=int, required=False, help="Duration of initial silence in seconds (default: 5)",default=SILENCE_DURATION)
     return parser.parse_args()
 
@@ -254,7 +255,7 @@ def parse_args():
 def main():
     args = parse_args()
     filename = args.file
-    pattern_length = args.pattern
+    pattern = args.pattern
     silence_duration = args.silence
 
     # Load audio file -- the first 5 seconds are no juggling
@@ -304,7 +305,7 @@ def main():
     )
 
     #plot and analyze intervals
-    analyzeIntervals(clean_peaks, time_clean, pattern_length)
+    analyzeIntervals(clean_peaks, time_clean, pattern)
 
     plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, original_peaks, clean_peaks)
 
