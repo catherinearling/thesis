@@ -137,10 +137,7 @@ def analyzeIntervals(peaks, time, pattern):
     # Use multiple guesses for cycle durations based on different starting catch pairs
     #consider each possible cycle length btwn ith catch and first catch -- start from i = pattern_length
     for i in range(pattern_length-1, len(catch_times)):
-        # Guess cycle duration based on time between first catch and ith catch
-        #cycle_duration_guess = catch_times[i] - first_catch_time
-        
-        # or, sliding window of cycle durations
+        # Guess cycle duration with sliding window of cycle durations
         cycle_duration_guess = (catch_times[i] - catch_times[(i - pattern_length +1)])
 
         #if guess is within reasonable estimates, consider it
