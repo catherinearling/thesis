@@ -91,7 +91,7 @@ def analyzeIntervals(peaks, time, pattern):
               or try adjusting noise reduction or peak detection params.")
         return
 
-    # Expected reasonable min and max interval .1 seconds, max interval .5 seconds
+    # Expected reasonable min and max interval
     min_interval = INTERVAL_BOUNDS["min"]
     max_interval = INTERVAL_BOUNDS["max"]
 
@@ -147,9 +147,9 @@ def analyzeIntervals(peaks, time, pattern):
             lcs_length, lcs_matches = longest_common_subsequence(predicted_cycle_starts, catch_times, tolerance=TOLERANCE)
 
             #normalize accuracy by the smaller of the two sequences
-            # this way, we are penalized for both overpredicting and underpredicting
-            denom = min(total_predictions, len(catch_times))
-            curr_accuracy = lcs_length / denom if denom > 0 else 0
+            # this way, we are penalized for both overpredicting and underpredicting (most of the time itll be underpredicting)
+            #denom = min(total_predictions, len(catch_times))
+            curr_accuracy = lcs_length / (len(catch_times) / pattern_length) #/ denom if denom > 0 else 0
 
             avg_drift = 0
             if lcs_matches:
