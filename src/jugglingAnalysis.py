@@ -185,13 +185,33 @@ def analyzeIntervals(peaks, time, pattern):
                         total_matches += 1
                         current_time = closest_catch_time #move to actual catch time, so that next step is relative to that
 
-
+            # --- Scoring ---
             total_predictions = len(predicted_cycle_starts)
-            curr_accuracy = (total_matches * pattern_length) / len(catch_times)
+            precision = total_matches / total_predictions if total_predictions > 0 else 0
+            expected_cycles = len(catch_times) / pattern_length
+
+            # Penalize overprediction more than underprediction
+                #underpredicting is okay because we may have missed some catches because they were too quiet,
+                # or we may have detected too many peaks due to noise
+            ratio = total_predictions / expected_cycles
+            # when ratio > 1, we are overpredicting
+            if ratio > 1:
+                #e^x  function gives stronger penalty for overpredicting number of cycles
+                penalty = np.exp(1 - ratio) 
+            # when ratio < 1, we are underpredicting
+            elif ratio < 1:
+                penalty = 0.85 + (0.25 * ratio)  # soft penalty if underpredicting
+
+            #scale by penalty 
+            curr_accuracy = precision * penalty
+            curr_accuracy = min(curr_accuracy, 1.0) 
+
+
+            #curr_accuracy = (total_matches * pattern_length) / len(catch_times)
             
             #keep this prediction if it has best accuracy so far, and is a valid accuracy (0 < acc < 1)
                 #valid accuracy means we are not overpredicting the amount of cycles nor underpredicting
-            if curr_accuracy > 0 and curr_accuracy < 1 and curr_accuracy > accuracy:
+            if curr_accuracy > 0 and curr_accuracy <= 1 and curr_accuracy > accuracy:
                 predicted_cycles = predicted_cycle_starts
                 accuracy = curr_accuracy
                 predictions = total_predictions
