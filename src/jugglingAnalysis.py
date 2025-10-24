@@ -204,6 +204,10 @@ def analyzeIntervals(peaks, time, pattern):
 
             #scale by penalty 
             curr_accuracy = precision * penalty
+            #truncate
+                #why? because sometimes floating point errors can cause it to be slightly > 1,
+                    # or because, if the intervals between throws is really small, maybe 
+                    # we can have multiple cycles match to snigle detected peak
             curr_accuracy = min(curr_accuracy, 1.0) 
 
 

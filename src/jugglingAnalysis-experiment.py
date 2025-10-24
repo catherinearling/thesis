@@ -148,7 +148,9 @@ def analyzeIntervals(peaks, time, pattern):
             lcs_length, lcs_matches = longest_common_subsequence(predicted_cycle_starts, catch_times, tolerance=TOLERANCE)
 
             total_predictions = len(predicted_cycle_starts)
-            precision = lcs_length / total_predictions if total_predictions > 0 else 0
+            if total_predictions <= 0:
+                continue
+            precision = lcs_length / total_predictions
             expected_cycles = len(catch_times) / pattern_length
 
             # Penalize overprediction more than underprediction
@@ -168,32 +170,30 @@ def analyzeIntervals(peaks, time, pattern):
             #truncate
                 #why? because sometimes floating point errors can cause it to be slightly > 1,
                     # or because, if the intervals between throws is really small, maybe 
-                    # we can have multiple cycles match to snigle detected peak
+                    # we can have multiple cycles match to single detected peak
             curr_accuracy = min(curr_accuracy, 1.0) 
 
 
             avg_drift = 0
             drift_var = 0
-            if lcs_matches:
-                # Compute global drift
-                drift_values = []
+            drift_values = []
 
-                for pred_time in predicted_cycle_starts:
-                    # Find closest actual catch
-                    index = np.argmin(np.abs(catch_times - pred_time))
-                    closest_catch_time = catch_times[index]
-                    drift = closest_catch_time - pred_time   # positive means the actual catch is later
-                    drift_values.append(drift)
+            for pred_time in predicted_cycle_starts:
+                # Find closest actual catch
+                index = np.argmin(np.abs(catch_times - pred_time))
+                closest_catch_time = catch_times[index]
+                drift = closest_catch_time - pred_time   # positive means the actual catch is later
+                drift_values.append(drift)
 
-                # Convert to numpy array for convenience
-                drift_values = np.array(drift_values)
+            # Convert to numpy array for convenience
+            drift_values = np.array(drift_values)
 
-                # --- Global drift: average offset (mean of all differences)
-                avg_drift = np.mean(drift_values)
+            # --- Global drift: average offset (mean of all differences)
+            avg_drift = np.mean(drift_values)
 
-                # --- Drift variability: how much drift fluctuates over time
-                    #could use to see if performer is speeding up or slowing down
-                drift_var = np.std(drift_values)
+            # --- Drift variability: how much drift fluctuates over time
+                #could use to see if performer is speeding up or slowing down
+            drift_var = np.std(drift_values)
 
             #keep this prediction if it has best accuracy so far, and is a valid accuracy (0 < acc < 1)
                 #valid accuracy means we are not overpredicting the amount of cycles nor underpredicting
