@@ -137,41 +137,35 @@ def analyzeIntervals(peaks, time, pattern):
     # Use multiple guesses for cycle durations based on different starting catch pairs
     #consider each possible cycle length btwn ith catch and first catch -- start from i = pattern_length
     for i in range(pattern_length-1, len(catch_times)):
-        # Guess cycle duration with sliding window of cycle durations
-        cycle_duration_guess = (catch_times[i] - catch_times[(i - pattern_length +1)])
 
-        #if guess is within reasonable estimates, consider it
-        if(cycle_duration_guess <= (max_interval * pattern_length)) \
-            and (cycle_duration_guess >= (min_interval * pattern_length)):
-            predicted_cycle_starts = []
-            predicted_cycle_starts.append(catch_times[i])
-            predicted_cycle_starts.append(catch_times[i - pattern_length +1])
+        variation = 0
+        begin = i - pattern_length +1 #starts from 0, goes to len - pattern_length
+
+        # --------- Cycle Duration Guessing and Matching ---------
+        # slide a window of different cycle lengths over the array of catch times
+        # this allows us to consider small errors in catch detection timing, since if we only try
+        # one fixed cycle length over whole array, any small error in catch detection timing 
+        # could throw off the entire analysis
+        end = i + variation 
+        while end < len(catch_times) and variation <= 2:  
+            # Guess cycle duration with sliding window of cycle durations
+            cycle_duration_guess = catch_times[end] - catch_times[begin]
             
-            current_time = first_catch_time
-            total_matches = 0
+            #if guess is within reasonable estimates, consider it
+            if(cycle_duration_guess <= (max_interval * pattern_length)) \
+                and (cycle_duration_guess >= (min_interval * pattern_length)):
+                predicted_cycle_starts = []
+                predicted_cycle_starts.append(catch_times[end])
+                predicted_cycle_starts.append(catch_times[begin])
+                
+                current_time = first_catch_time
+                total_matches = 0
 
-            #step forwards starting at index i to find backwards matches for this cycle duration guess
-            current_time = catch_times[i]
-            while (current_time + cycle_duration_guess) <= catch_times[-1]:
-                current_time += cycle_duration_guess
-                predicted_cycle_starts.append(current_time)
-
-                # If we step one cycle length away from our current time, 
-                # do we land on a detected catch? (within tolerance)
-                index = np.argmin(np.abs(catch_times - current_time))
-                closest_catch_time = catch_times[index]
-                diff = np.abs(closest_catch_time - current_time)
-                if diff <= TOLERANCE:
-                    total_matches += 1
-                    current_time = closest_catch_time #move to actual catch time, so that next step is relative to that
-
-
-            #step backwards starting at index i-pattern_length to find forwards matches for this cycle duration guess
-            if (i-pattern_length) >= 0:
-                current_time = catch_times[i - pattern_length]
-                while (current_time - cycle_duration_guess) >= first_catch_time:
-                    current_time -= cycle_duration_guess
-                    predicted_cycle_starts.insert(0, current_time)
+                #step forwards starting at end to find backwards matches for this cycle duration guess
+                current_time = catch_times[end]
+                while (current_time + cycle_duration_guess) <= catch_times[-1]:
+                    current_time += cycle_duration_guess
+                    predicted_cycle_starts.append(current_time)
 
                     # If we step one cycle length away from our current time, 
                     # do we land on a detected catch? (within tolerance)
@@ -182,42 +176,63 @@ def analyzeIntervals(peaks, time, pattern):
                         total_matches += 1
                         current_time = closest_catch_time #move to actual catch time, so that next step is relative to that
 
-            # --- Scoring ---
-            total_predictions = len(predicted_cycle_starts)
-            precision = total_matches / total_predictions if total_predictions > 0 else 0
-            expected_cycles = len(catch_times) / pattern_length
+                #step backwards starting at index i-pattern_length to find forwards matches for this cycle duration guess
+                if begin >= 0:
+                    current_time = catch_times[begin]
+                    while (current_time - cycle_duration_guess) >= first_catch_time:
+                        current_time -= cycle_duration_guess
+                        predicted_cycle_starts.insert(0, current_time)
 
-            # Penalize overprediction more than underprediction
-                #underpredicting is okay because we may have missed some catches because they were too quiet,
-                # or we may have detected too many peaks due to noise
-            ratio = total_predictions / expected_cycles
-            # when ratio > 1, we are overpredicting
-            if ratio > 1:
-                #e^x  function gives stronger penalty for overpredicting number of cycles
-                penalty = np.exp(1 - ratio) 
-            # when ratio < 1, we are underpredicting
-            elif ratio < 1:
-                penalty = 0.85 + (0.25 * ratio)  # soft penalty if underpredicting
+                        # If we step one cycle length away from our current time, 
+                        # do we land on a detected catch? (within tolerance)
+                        index = np.argmin(np.abs(catch_times - current_time))
+                        closest_catch_time = catch_times[index]
+                        diff = np.abs(closest_catch_time - current_time)
+                        if diff <= TOLERANCE:
+                            total_matches += 1
+                            current_time = closest_catch_time #move to actual catch time, so that next step is relative to that
 
-            #scale by penalty 
-            curr_accuracy = precision * penalty
-            #truncate
-                #why? because sometimes floating point errors can cause it to be slightly > 1,
-                    # or because, if the intervals between throws is really small, maybe 
-                    # we can have multiple cycles match to snigle detected peak
-            curr_accuracy = min(curr_accuracy, 1.0) 
+                # --------- Scoring ---------
+                total_predictions = len(predicted_cycle_starts)
+                precision = total_matches / total_predictions if total_predictions > 0 else 0
+                expected_cycles = len(catch_times) / pattern_length
+
+                # Penalize overprediction more than underprediction
+                    #underpredicting is okay because we may have missed some catches because they were too quiet,
+                    # or we may have detected too many peaks due to noise
+                ratio = total_predictions / expected_cycles
+                # when ratio > 1, we are overpredicting
+                if ratio > 1:
+                    #e^x  function gives stronger penalty for overpredicting number of cycles
+                    penalty = np.exp(1 - ratio) 
+                # when ratio < 1, we are underpredicting
+                elif ratio < 1:
+                    penalty = 0.75 + (0.25 * ratio)  # soft penalty if underpredicting
+
+                #scale by penalty 
+                curr_accuracy = precision * penalty
+                #truncate
+                    #why? because sometimes floating point errors can cause it to be slightly > 1,
+                        # or because, if the intervals between throws is really small, maybe 
+                        # we can have multiple cycles match to snigle detected peak
+                curr_accuracy = min(curr_accuracy, 1.0) 
 
 
-            #curr_accuracy = (total_matches * pattern_length) / len(catch_times)
+                #curr_accuracy = (total_matches * pattern_length) / len(catch_times)
+                
+                #keep this prediction if it has best accuracy so far, and is a valid accuracy (0 < acc < 1)
+                    #valid accuracy means we are not overpredicting the amount of cycles nor underpredicting
+                if curr_accuracy > 0 and curr_accuracy <= 1 and curr_accuracy > accuracy:
+                    predicted_cycles = predicted_cycle_starts
+                    accuracy = curr_accuracy
+                    predictions = total_predictions
+                    matches = total_matches
+            else:
+                break  # no point in continuing to vary if we are already out of bounds
             
-            #keep this prediction if it has best accuracy so far, and is a valid accuracy (0 < acc < 1)
-                #valid accuracy means we are not overpredicting the amount of cycles nor underpredicting
-            if curr_accuracy > 0 and curr_accuracy <= 1 and curr_accuracy > accuracy:
-                predicted_cycles = predicted_cycle_starts
-                accuracy = curr_accuracy
-                predictions = total_predictions
-                matches = total_matches
-    
+            variation += 1  
+            end = i + variation
+
     #only plot the best (in terms of accuracy) predictions we got
     if accuracy > 0 and len(predicted_cycles) > 0:
         print(f"Total predicted cycle starts: {predictions}")
