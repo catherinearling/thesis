@@ -1,6 +1,7 @@
 import sys
 import os #for file path handling
 import argparse
+import math
 
 from scipy.signal import find_peaks, medfilt
 import numpy as np
@@ -129,10 +130,10 @@ def analyzeIntervals(peaks, time, pattern):
     # this is considering every single spike as a catch time!!!
     first_catch_time = catch_times[0]
 
-    accuracy = 0
+    best_prob_product = 0.0
     predicted_cycles = []
     predictions = 0
-    matches = 0
+    num_matches = 0
 
     # Use multiple guesses for cycle durations based on different starting catch pairs
     #consider each possible cycle length btwn ith catch and first catch -- start from i = pattern_length
@@ -151,15 +152,16 @@ def analyzeIntervals(peaks, time, pattern):
             # Guess cycle duration with sliding window of cycle durations
             cycle_duration_guess = catch_times[end] - catch_times[begin]
             
-            #if guess is within reasonable estimates, consider it
+            #if guess is within reasonable estimates, consider i
             if(cycle_duration_guess <= (max_interval * pattern_length)) \
                 and (cycle_duration_guess >= (min_interval * pattern_length)):
+
                 predicted_cycle_starts = []
                 predicted_cycle_starts.append(catch_times[end])
                 predicted_cycle_starts.append(catch_times[begin])
                 
                 current_time = first_catch_time
-                total_matches = 0
+                curr_num_matches = 0
 
                 #step forwards starting at end to find backwards matches for this cycle duration guess
                 current_time = catch_times[end]
@@ -169,12 +171,12 @@ def analyzeIntervals(peaks, time, pattern):
 
                     # If we step one cycle length away from our current time, 
                     # do we land on a detected catch? (within tolerance)
-                    index = np.argmin(np.abs(catch_times - current_time))
-                    closest_catch_time = catch_times[index]
-                    diff = np.abs(closest_catch_time - current_time)
+                    closest = nearestCatch(catch_times, current_time)
+                    
+                    diff = np.abs(closest - current_time)
                     if diff <= TOLERANCE:
-                        total_matches += 1
-                        current_time = closest_catch_time #move to actual catch time, so that next step is relative to that
+                        curr_num_matches += 1
+                        current_time = closest #move to actual catch time, so that next step is relative to that
 
                 #step backwards starting at index i-pattern_length to find forwards matches for this cycle duration guess
                 if begin >= 0:
@@ -185,48 +187,37 @@ def analyzeIntervals(peaks, time, pattern):
 
                         # If we step one cycle length away from our current time, 
                         # do we land on a detected catch? (within tolerance)
-                        index = np.argmin(np.abs(catch_times - current_time))
-                        closest_catch_time = catch_times[index]
-                        diff = np.abs(closest_catch_time - current_time)
+                        closest = nearestCatch(catch_times, current_time)
+
+                        diff = np.abs(closest - current_time)
                         if diff <= TOLERANCE:
-                            total_matches += 1
-                            current_time = closest_catch_time #move to actual catch time, so that next step is relative to that
+                            curr_num_matches += 1
+                            current_time = closest #move to actual catch time, so that next step is relative to that
+
 
                 # --------- Scoring ---------
-                total_predictions = len(predicted_cycle_starts)
-                precision = total_matches / total_predictions if total_predictions > 0 else 0
-                expected_cycles = len(catch_times) / pattern_length
+                # A candidate cycle is “good” if its predicted starts sit consistently 
+                # close to real catch times
+                
+                # Choose sigma (the expected jitter around ideal times)
+                sigma = TOLERANCE / 2
 
-                # Penalize overprediction more than underprediction
-                    #underpredicting is okay because we may have missed some catches because they were too quiet,
-                    # or we may have detected too many peaks due to noise
-                ratio = total_predictions / expected_cycles
-                # when ratio > 1, we are overpredicting
-                if ratio > 1:
-                    #e^x  function gives stronger penalty for overpredicting number of cycles
-                    penalty = np.exp(1 - ratio) 
-                # when ratio < 1, we are underpredicting
-                elif ratio < 1:
-                    penalty = 0.75 + (0.25 * ratio)  # soft penalty if underpredicting
-
-                #scale by penalty 
-                curr_accuracy = precision * penalty
-                #truncate
-                    #why? because sometimes floating point errors can cause it to be slightly > 1,
-                        # or because, if the intervals between throws is really small, maybe 
-                        # we can have multiple cycles match to snigle detected peak
-                curr_accuracy = min(curr_accuracy, 1.0) 
-
-
-                #curr_accuracy = (total_matches * pattern_length) / len(catch_times)
+                # Compute product of Gaussian PDFs for how close each predicted time is to an actual catch
+                prob_product = 1.0
+                for predicted_time in predicted_cycle_starts:
+                    nearest = nearestCatch(catch_times, predicted_time)
+                    diff = nearest - predicted_time
+                    p = pdf(diff, mu=0, sigma=sigma)
+                    prob_product *= p
+                
                 
                 #keep this prediction if it has best accuracy so far, and is a valid accuracy (0 < acc < 1)
                     #valid accuracy means we are not overpredicting the amount of cycles nor underpredicting
-                if curr_accuracy > 0 and curr_accuracy <= 1 and curr_accuracy > accuracy:
+                if prob_product > best_prob_product:
                     predicted_cycles = predicted_cycle_starts
-                    accuracy = curr_accuracy
-                    predictions = total_predictions
-                    matches = total_matches
+                    best_prob_product = prob_product
+                    predictions = len(predicted_cycle_starts)
+                    num_matches = curr_num_matches
             else:
                 break  # no point in continuing to vary if we are already out of bounds
             
@@ -234,10 +225,10 @@ def analyzeIntervals(peaks, time, pattern):
             end = i + variation
 
     #only plot the best (in terms of accuracy) predictions we got
-    if accuracy > 0 and len(predicted_cycles) > 0:
+    if best_prob_product > 0 and len(predicted_cycles) > 0:
         print(f"Total predicted cycle starts: {predictions}")
-        print(f"Matched cycle starts to detected catches: {matches}")
-        print(f"Accuracy: {accuracy*100:.2f}%\n")
+        print(f"Matched cycle starts to detected catches: {num_matches}")
+        print(f"Accuracy: {best_prob_product*100:.2f}%\n")
 
         # Plotting
         plt.figure(figsize=(12, 5))
@@ -270,6 +261,21 @@ def analyzeIntervals(peaks, time, pattern):
         print("could not find any valid cycle guesses")
 
 
+def pdf(x, mu=0.0, sigma=1.0):
+    """
+    Gaussian (normal) probability density function.
+      x: value to evaluate
+      mu: mean
+      sigma: standard deviation
+    """
+    coeff = 1.0 / (math.sqrt(2.0 * math.pi) * sigma)
+    exponent = math.exp(-((x - mu) ** 2) / (2.0 * (sigma ** 2)))
+    return coeff * exponent
+
+
+def nearestCatch(catch_times, current_time):
+    index = np.argmin(np.abs(catch_times - current_time))
+    return catch_times[index]
 
 def plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, original_peaks, clean_peaks):
     #Visualization--------------------------------------------------------------------
@@ -328,7 +334,7 @@ def main():
     audio_clean = audio_clean[num_samples:]
 
     # Save the cleaned audio to a new file for debugging
-    sf.write('clean.wav', audio_clean, sampling_rate)
+    sf.write('data/clean.wav', audio_clean, sampling_rate)
 
     #---------------------------------------------------------------------------
 

@@ -398,7 +398,7 @@ def main():
     audio_clean = audio_clean[num_samples:]
 
     # Save the cleaned audio to a new file for debugging
-    sf.write('clean.wav', audio_clean, sampling_rate)
+    sf.write('/data/clean.wav', audio_clean, sampling_rate)
 
     #---------------------------------------------------------------------------
 
