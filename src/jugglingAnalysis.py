@@ -130,17 +130,17 @@ def analyzeIntervals(peaks, time, pattern):
     # this is considering every single spike as a catch time!!!
     first_catch_time = catch_times[0]
 
-    best_prob_product = 0.0
     predicted_cycles = []
     predictions = 0
     num_matches = 0
+    best_avg_log_prob = -sys.float_info.max  # Initialize to smallest possible float
 
     # Use multiple guesses for cycle durations based on different starting catch pairs
     #consider each possible cycle length btwn ith catch and first catch -- start from i = pattern_length
-    for i in range(pattern_length-1, len(catch_times)):
+    for i in range(pattern_length, len(catch_times)):
 
         variation = 0
-        begin = i - pattern_length +1 #starts from 0, goes to len - pattern_length
+        begin = i - pattern_length #starts from 0, goes to len - pattern_length
 
         # --------- Cycle Duration Guessing and Matching ---------
         # slide a window of different cycle lengths over the array of catch times
@@ -200,22 +200,27 @@ def analyzeIntervals(peaks, time, pattern):
                 # close to real catch times
                 
                 # Choose sigma (the expected jitter around ideal times)
-                sigma = TOLERANCE / 2
+                sigma = TOLERANCE*1.1 #less strict for bad matches if its bigger
 
                 # Compute product of Gaussian PDFs for how close each predicted time is to an actual catch
-                prob_product = 1.0
+                log_prob_sum = 0.0
                 for predicted_time in predicted_cycle_starts:
                     nearest = nearestCatch(catch_times, predicted_time)
                     diff = nearest - predicted_time
                     p = pdf(diff, mu=0, sigma=sigma)
-                    prob_product *= p
+
+                    #avoid multiplying many small probabilities together (which can lead to numerical underflow)
+                    # instead, sum the log probabilities
+                    log_prob_sum += math.log(p)
                 
+                avg_log_prob = log_prob_sum / len(predicted_cycle_starts)
+
                 
                 #keep this prediction if it has best accuracy so far, and is a valid accuracy (0 < acc < 1)
                     #valid accuracy means we are not overpredicting the amount of cycles nor underpredicting
-                if prob_product > best_prob_product:
+                if avg_log_prob > best_avg_log_prob:
                     predicted_cycles = predicted_cycle_starts
-                    best_prob_product = prob_product
+                    best_avg_log_prob = avg_log_prob
                     predictions = len(predicted_cycle_starts)
                     num_matches = curr_num_matches
             else:
@@ -225,10 +230,11 @@ def analyzeIntervals(peaks, time, pattern):
             end = i + variation
 
     #only plot the best (in terms of accuracy) predictions we got
-    if best_prob_product > 0 and len(predicted_cycles) > 0:
+    if len(predicted_cycles) > 0:
         print(f"Total predicted cycle starts: {predictions}")
         print(f"Matched cycle starts to detected catches: {num_matches}")
-        print(f"Accuracy: {best_prob_product*100:.2f}%\n")
+        accuracy = math.exp(best_avg_log_prob) / pdf(0, 0, sigma) * 100
+        print(f"Accuracy: {accuracy}%\n")
 
         # Plotting
         plt.figure(figsize=(12, 5))
