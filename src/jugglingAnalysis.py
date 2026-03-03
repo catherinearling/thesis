@@ -1,3 +1,4 @@
+from pathlib import Path
 import sys
 import os #for file path handling
 import argparse
@@ -14,19 +15,24 @@ import soundfile as sf
 # ================================================================
 # GLOBAL CONFIGURATION
 # ================================================================
-TOLERANCE = 0.1  # 100ms tolerance for matching predicted to actual throw
-SILENCE_DURATION = 5  # first 5 seconds assumed to be no activity
+TOLERANCE = 0.06  # 50ms tolerance for matching predicted to actual throw
+
+SILENCE_DURATION = 5  # first 5 seconds assumed to be no activity by default.
 
 PEAK_DETECTION_PARAMS = {
-    "height": 0.001,  # minimum height of peaks
-    "distance_sec": 0.1,  # minimum time between peaks in seconds
-    "prominence": 0.004 # how much a peak has to "stand out" relative to its surroundings
+    "height": 0.0005,  # minimum height of peaks. a value determined from data
+    "distance_sec": 0.06,  # minimum time between peaks in seconds. value determined from data
+    "prominence": 0.007 # how much a peak has to "stand out" relative to its surroundings
 }
 
+#for analyzing rhythm of detected catches
 INTERVAL_BOUNDS = {
-    "min": 0.1,  # minimum allowed interval (seconds)
-    "max": 0.4   # maximum allowed interval (seconds)
+    "min": 0.06,  # minimum allowed interval (seconds)
+    "max": 0.64   # maximum allowed interval (seconds)
 }
+
+
+
 
 
 def longest_common_subsequence(seq1, seq2, tolerance=TOLERANCE):
@@ -71,7 +77,6 @@ def reduceNoise(audio, sampling_rate, silence_duration=SILENCE_DURATION):
     num_silence_frames =int(sampling_rate * silence_duration)
     noise_region = S_full[:, :num_silence_frames] 
     noise_power = np.mean(noise_region, axis=1) #axis=1 ensures mean is calc for each freq band
-
 
     noise_mean = np.mean(noise_region, axis=1)
     noise_std  = np.std(noise_region, axis=1)
@@ -328,7 +333,7 @@ def analyzeIntervals(peaks, time, pattern):
         # FORCE a tight vertical range
         plt.ylim(-0.05, 0.07)   # <<< prevents huge empty space
 
-        plt.show()
+        #plt.show()
     else:
         print("could not find any valid cycle guesses")
 
@@ -380,7 +385,7 @@ def parse_args():
     return parser.parse_args()
 
 def detect_peaks_dynamic(audio_clean, sampling_rate,
-                         min_distance_sec=0.1,
+                         min_distance_sec,
                          height_percentile=99,
                          prominence_percentile=99):
     x = np.asarray(audio_clean)
@@ -463,12 +468,31 @@ def main():
 
     # Convert sample indices to time values for x-axis 
     time_clean = (np.arange(len(audio_clean)) + num_samples) / sampling_rate
+############### write out detected peaks to txt file #####################
+
+    # Convert sample indices to time values for x-axis
+    time_clean = (np.arange(len(audio_clean)) + num_samples) / sampling_rate
+
+    # ---- Export detected catch/peak timestamps ----
+    # timestamps in seconds for each detected peak in cleaned audio
+    peak_times_sec = time_clean[clean_peaks]
+
+    # output file: same base name as audio, but .txt, saved next to the audio (data/)
+    audio_stem = Path(filename).stem
+    out_path = Path("data") / f"{audio_stem}.txt"
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        for t in peak_times_sec:
+            f.write(f"{t:.6f},\n")  # 6 decimals = microsecond-ish resolution
+
+    print(f"Wrote {len(peak_times_sec)} peak timestamps to {out_path}")
+#################
     time = np.arange(len(audio)) / (sampling_rate)
     
     #plot and analyze intervals
-    analyzeIntervals(clean_peaks, time_clean, pattern)
+    #analyzeIntervals(clean_peaks, time_clean, pattern)
 
-    plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, original_peaks, clean_peaks)
+    #plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, original_peaks, clean_peaks)
 
 if __name__ == "__main__":
     main()
