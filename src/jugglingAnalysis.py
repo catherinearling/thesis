@@ -1,66 +1,13 @@
 from pathlib import Path
-import sys
 import os #for file path handling
-import argparse
 import math
+from analysisHelpers import *
 
 from scipy.signal import find_peaks, medfilt
 import numpy as np
-import matplotlib.pyplot as plt
 
 import librosa
 import soundfile as sf
-
-
-# ================================================================
-# GLOBAL CONFIGURATION
-# ================================================================
-TOLERANCE = 0.06  # 50ms tolerance for matching predicted to actual throw
-
-SILENCE_DURATION = 5  # first 5 seconds assumed to be no activity by default.
-
-PEAK_DETECTION_PARAMS = {
-    "height": 0.0005,  # minimum height of peaks. a value determined from data
-    "distance_sec": 0.06,  # minimum time between peaks in seconds. value determined from data
-    "prominence": 0.007 # how much a peak has to "stand out" relative to its surroundings
-}
-
-#for analyzing rhythm of detected catches
-INTERVAL_BOUNDS = {
-    "min": 0.06,  # minimum allowed interval (seconds)
-    "max": 0.64   # maximum allowed interval (seconds)
-}
-
-
-
-
-
-def longest_common_subsequence(seq1, seq2, tolerance=TOLERANCE):
-    m, n = len(seq1), len(seq2)
-
-    # Create a 2D array to store lengths of LCS
-    #   a 2D DP (dynamic programming) table 
-    # where dp[i][j] 
-    # represents the LCS length between 
-    # the first i elements of seq1 
-    # and the first j elements of seq2.
-    dp = np.zeros((m + 1, n + 1))
-
-    # Fill dp array
-    for i in range(1, m + 1):
-        for j in range(1, n + 1):
-            if abs(seq1[i - 1] - seq2[j - 1]) <= tolerance:
-                # if the two catches are within the tolerance, they are considered a match
-                # so we extend the LCS found so far by 1
-                dp[i][j] = dp[i - 1][j - 1] + 1
-            else:
-                #otherwise, carry forward the max LCS found by 
-                # either ignoring the current element of seq1 or seq2
-                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
-
-
-    return int(dp[m][n])
-
 
 
 #-----------------------------------------------------------------
@@ -98,7 +45,7 @@ def reduceNoise(audio, sampling_rate, silence_duration=SILENCE_DURATION):
     # kernel_size=(1, 5) creates a filter that looks at 5 consecutive data points 
     # for each frequency band
     #reduce random background noise spikes while preserving peaks
-    mask = medfilt(mask, kernel_size=(1,5))
+    mask = medfilt(mask, kernel_size=(1,7))
 
     # apply mask to original data
     S_clean = S_full * mask
@@ -109,29 +56,26 @@ def reduceNoise(audio, sampling_rate, silence_duration=SILENCE_DURATION):
 
     return audio_clean
 
-#------------------------------------------------------------
-# Analyze the timing intervals between detected peaks to estimate rhythmic juggling cycles
-# ----assumes the times are in order 
-#  paramters:
-# --peaks: indices of detected catch times / spikes
-# --time: time values corresponding to audio samples
-# --pattern: vanilla siteswap pattern (like 441, 51)
-#------------------------------------------------------------
-def analyzeIntervals(peaks, time, pattern):
-    pattern_length = len(str(pattern))
-    #put intervals btwn catches into data struct
 
-    #convert peak indices to times
-    catch_times = time[peaks]
-    print(f"Detected {len(catch_times)} catch times.")
 
-    if len(catch_times) == 0:
-        print("No peaks detected. Try adjusting noise reduction or peak detection params.")
-        return
-    if len(catch_times) < pattern_length:
-        print(f"Not enough catches detected for pattern length {pattern_length}. Either more data is needed for analyzation, \
-              or try adjusting noise reduction or peak detection params.")
-        return
+#------------------------------------------------------------
+# Score a list of candidate cycle start times against detected catches
+# using Gaussian PDF — returns avg log probability
+#------------------------------------------------------------
+def scoreCycles(predicted_cycle_starts, catch_times, sigma):
+    log_prob_sum = 0.0
+    for predicted_time in predicted_cycle_starts:
+        nearest = nearestCatch(catch_times, predicted_time)
+        diff = nearest - predicted_time
+        p = pdf(diff, mu=0, sigma=sigma)
+        log_prob_sum += math.log(p)
+    return log_prob_sum / len(predicted_cycle_starts)
+
+#------------------------------------------------------------
+# Find the best cycle duration and predicted cycle start times
+# by sliding a window of pattern_length across the catch times
+#------------------------------------------------------------
+def findBestCycles(catch_times, pattern_length):
 
     # Expected reasonable min and max interval .1 seconds, max interval .5 seconds
     min_interval = INTERVAL_BOUNDS["min"]
@@ -144,271 +88,168 @@ def analyzeIntervals(peaks, time, pattern):
     # every ball must be thrown and caught once per cycle
     # Rough estimate of cycle time based on initial catches
     # this is considering every single spike as a catch time!!!
-    first_catch_time = catch_times[0]
-
     predicted_cycles = []
-    predictions = 0
-    num_matches = 0
     best_avg_log_prob = 0 # Initialize to first guess inside loop
     initialized = False
-    best_sigma = None
+    sigma = None
+    best_cycle_duration = None
 
     # Use multiple guesses for cycle durations based on different starting catch pairs
     #consider each possible cycle length btwn ith catch and first catch -- start from i = pattern_length
     for i in range(pattern_length, len(catch_times)):
+        begin = i - pattern_length 
+        # Guess cycle duration with sliding window of cycle durations
+        cycle_duration_guess = catch_times[i] - catch_times[begin]
+        
+        #if guess is within reasonable estimates, consider it
+        if(cycle_duration_guess <= (max_interval * pattern_length)) \
+            and (cycle_duration_guess >= (min_interval * pattern_length)):
 
-        variation = 0
-        begin = i - pattern_length #starts from 0, goes to len - pattern_length
-
-        # --------- Cycle Duration Guessing and Matching ---------
-        # slide a window of different cycle lengths over the array of catch times
-        # this allows us to consider small errors in catch detection timing, since if we only try
-        # one fixed cycle length over whole array, any small error in catch detection timing 
-        # could throw off the entire analysis
-        end = i + variation 
-        while end < len(catch_times) and variation <= 2:  
-            # Guess cycle duration with sliding window of cycle durations
-            cycle_duration_guess = catch_times[end] - catch_times[begin]
+            predicted_cycle_starts = []
+            predicted_cycle_starts.append(catch_times[i])
+            predicted_cycle_starts.append(catch_times[begin])
             
-            #if guess is within reasonable estimates, consider i
-            if(cycle_duration_guess <= (max_interval * pattern_length)) \
-                and (cycle_duration_guess >= (min_interval * pattern_length)):
+            curr_num_matches = 0
+            #step forwards starting at end to find backwards matches for this cycle duration guess
+            current_time = catch_times[i]
+            while (current_time + cycle_duration_guess) <= catch_times[-1]:
+                current_time += cycle_duration_guess
+                predicted_cycle_starts.append(current_time)
 
-                predicted_cycle_starts = []
-                predicted_cycle_starts.append(catch_times[end])
-                predicted_cycle_starts.append(catch_times[begin])
+                # # If we step one cycle length away from our current time, 
+                # # do we land on a detected catch? (within tolerance)
+                # closest = nearestCatch(catch_times, current_time)
                 
-                current_time = first_catch_time
-                curr_num_matches = 0
 
-                #step forwards starting at end to find backwards matches for this cycle duration guess
-                current_time = catch_times[end]
-                while (current_time + cycle_duration_guess) <= catch_times[-1]:
-                    current_time += cycle_duration_guess
-                    predicted_cycle_starts.append(current_time)
+            #step backwards starting at index i-pattern_length to find forwards matches for this cycle duration guess
+            current_time = catch_times[begin]
+            while (current_time - cycle_duration_guess) >= catch_times[0]:
+                current_time -= cycle_duration_guess
+                predicted_cycle_starts.insert(0, current_time)
 
-                    # # If we step one cycle length away from our current time, 
-                    # # do we land on a detected catch? (within tolerance)
-                    # closest = nearestCatch(catch_times, current_time)
-                    
-                    # # i think maybe we should get rid of this tolerance check and just use the pdf scoring later
-                    # # TODO ------------------------------------------------------
-                    # diff = np.abs(closest - current_time)
-                    # if diff <= TOLERANCE:
-                    #     curr_num_matches += 1
-                    #     current_time = closest #move to actual catch time, so that next step is relative to that
+                # # If we step one cycle length away from our current time, 
+                # # do we land on a detected catch? (within tolerance)
+                # closest = nearestCatch(catch_times, current_time)
 
-                #step backwards starting at index i-pattern_length to find forwards matches for this cycle duration guess
-                if begin >= 0:
-                    current_time = catch_times[begin]
-                    while (current_time - cycle_duration_guess) >= first_catch_time:
-                        current_time -= cycle_duration_guess
-                        predicted_cycle_starts.insert(0, current_time)
-
-                        # # If we step one cycle length away from our current time, 
-                        # # do we land on a detected catch? (within tolerance)
-                        # closest = nearestCatch(catch_times, current_time)
-
-                        # # diff = np.abs(closest - current_time)
-                        # if diff <= TOLERANCE:
-                        #     curr_num_matches += 1
-                        #     current_time = closest #move to actual catch time, so that next step is relative to that
-
-
-                # --------- Scoring ---------
-                # A candidate cycle is “good” if its predicted starts sit consistently 
-                # close to real catch times
-                
-                # Choose sigma (the expected jitter around ideal times)
-                best_sigma = TOLERANCE*0.85 #less strict for bad matches if its bigger
-
-                # Compute product of Gaussian PDFs for how close each predicted time is to an actual catch
-                log_prob_sum = 0.0
-                for predicted_time in predicted_cycle_starts:
-                    nearest = nearestCatch(catch_times, predicted_time)
-                    diff = nearest - predicted_time
-                    p = pdf(diff, mu=0, sigma=best_sigma)
-
-                    #avoid multiplying many small probabilities together (which can lead to numerical underflow)
-                    # instead, sum the log probabilities
-                    log_prob_sum += math.log(p)
-                
-                avg_log_prob = log_prob_sum / len(predicted_cycle_starts)
-
-                # Initialize best guess on first valid prediction
-                #otherwise, keep this prediction if it has best accuracy so far, and is a valid accuracy (0 < acc < 1)
-                    #valid accuracy means we are not overpredicting the amount of cycles nor underpredicting
-                if (avg_log_prob > best_avg_log_prob) or (not initialized):
-                    if not initialized:
-                        initialized = True
-                    predicted_cycles = predicted_cycle_starts
-                    best_avg_log_prob = avg_log_prob
-                    predictions = len(predicted_cycle_starts)
-                    num_matches = curr_num_matches
+            # --------- Scoring ---------
+            # A candidate cycle is “good” if its predicted starts sit consistently 
+            # close to real catch times
             
-            variation += 1  
-            end = i + variation
+            # Choose sigma (the expected jitter around ideal times)
+            sigma = TOLERANCE*0.85 #less strict for bad matches if its bigger
+            avg_log_prob = scoreCycles(predicted_cycle_starts, catch_times, sigma)
+
+            # Initialize best guess on first valid prediction
+            #otherwise, keep this prediction if it has best accuracy so far, and is a valid accuracy (0 < acc < 1)
+                #valid accuracy means we are not overpredicting the amount of cycles nor underpredicting
+            if (avg_log_prob > best_avg_log_prob) or (not initialized):
+                if not initialized:
+                    initialized = True
+                predicted_cycles = predicted_cycle_starts
+                best_avg_log_prob = avg_log_prob
+                best_cycle_duration = cycle_duration_guess
+
+    return predicted_cycles, best_cycle_duration, sigma, best_avg_log_prob
+    
+
+
+#------------------------------------------------------------
+# Analyze the timing intervals between detected peaks to estimate rhythmic juggling cycles
+# ----assumes the times are in order 
+#  paramters:
+# --peaks: indices of detected catch times / spikes
+# --time: time values corresponding to audio samples
+# --pattern: vanilla siteswap pattern (like 441, 51)
+#returns list of predicted cycle start timestamps (in seconds) or an empty list if no
+#valid cycle guesses found
+#------------------------------------------------------------
+def analyzeIntervals(peaks, time, pattern):
+    pattern_length = len(str(pattern))
+    #put intervals btwn catches into data struct
+
+    #convert peak indices to times
+    catch_times = time[peaks]
+    print(f"Detected {len(catch_times)} catch times.")
+
+    if len(catch_times) == 0:
+        print("No peaks detected. Try adjusting noise reduction or peak detection params.")
+        return []
+    if len(catch_times) < pattern_length:
+        print(f"Not enough catches detected for pattern length {pattern_length}. Either more data is needed for analyzation, \
+              or try adjusting noise reduction or peak detection params.")
+        return []
+    
+
+    predicted_cycles, best_cycle_duration, sigma, best_avg_log_prob = findBestCycles(catch_times, pattern_length)
+
+    if best_cycle_duration is None:
+        print("Could not find any valid cycle guesses.")
+        return []
+        
+    #add predicted catches within each cycle
+    # In a vanilla siteswap, throws are ideally evenly spaced one beat apart.
+    # beat_duration = cycle_duration / pattern_length
+    # so place one catch per beat position within the cycle.
+    beat_duration = best_cycle_duration / pattern_length
+    total_beats = len(predicted_cycles) * pattern_length
+    predicted_catches = [predicted_cycles[0] + i * beat_duration for i in range(total_beats)]
+
+    #now, predicted_catches should have all the predicted catch times based on the best cycle duration guess,
+    # including cycle starts
 
     #only plot the best (in terms of accuracy) predictions we got
-    if len(predicted_cycles) > 0 and best_sigma is not None:
-        print(f"Total predicted cycle starts: {predictions}")
-        print(f"Matched cycle starts to detected catches: {num_matches}")
-        
-        # normalize accuracy so it's roughly 0 to 100%
-        accuracy = math.exp(best_avg_log_prob) / pdf(0, 0, best_sigma) * 100
-        print(f"Pattern match score (accuracy): {accuracy}%\n")
+    # normalize accuracy so it's roughly 0 to 100%
+    accuracy = math.exp(best_avg_log_prob) / pdf(0, 0, sigma) * 100
+    print(f"Pattern match score (accuracy): {accuracy}%\n")
 
 
-        # Coaching Tips ------------------------------------------------
-        intervals = np.diff(catch_times)
-        avg_interval = np.mean(intervals)
-        std_interval = np.std(intervals)
-        min_interval = np.min(intervals)
-        max_interval = np.max(intervals)
-        estimated_cycles = len(catch_times) / pattern_length
+    # Coaching Tips ------------------------------------------------
+    intervals = np.diff(catch_times)
+    avg_interval = np.mean(intervals)
+    std_interval = np.std(intervals)
+    estimated_cycles = len(catch_times) / pattern_length
 
-        print("Coaching Tips:")
-        variability = std_interval / avg_interval
-        print(f"variability (std dev / mean): {variability:.2f}")
-        if variability > 0.4:
-            print("- Your timing between throws seems inconsistent." \
-            " Some throws are much higher or lower than others. Try to make each throw identical in height.")
-        elif variability > 0.3:
-            print("Your rhythm is pretty good, but there's some room for improvement." \
-            " Focus on maintaining a steady pace throughout your juggling.")  
-        else:
-            print("Great job! Your juggling rhythm is very consistent.")  
-
-        
-        # 3) Tempo drift: speeding up or slowing down over time
-        if len(intervals) >= 6:
-            third = len(intervals) // 3
-            early_mean = np.mean(intervals[:third])
-            late_mean = np.mean(intervals[-third:])
-            if late_mean > early_mean * 1.3:
-                print("You’re slowing down as you go. Try to keep the same tempo from start to finish.")
-            elif late_mean < early_mean * 0.9:
-                print("You’re speeding up over time. Try to keep your throws relaxed and steady.")    
-
-        # 4) Pattern match quality
-        if accuracy >= 80:
-            print("Your timing matches the chosen pattern very well. Great job!")
-        elif accuracy >= 50:
-            print("You’re roughly following the pattern, but there are some off-beat cycles. "
-                            "Focus on keeping the throws in a steady groove.")
-        else:
-            print("The timing doesn’t strongly match a repeating pattern yet. "
-                            "Try working on a slower, simpler pattern and aim for very even throws.")
-
-        # 5) Does the detected pattern cover most of the run?
-        if estimated_cycles > 0:
-            coverage_ratio = predictions / estimated_cycles
-            if coverage_ratio < 0.6:
-                print("The detected pattern only lines up with part of the run. "
-                                "This could mean extra out-of-rhythm throws or drops between clean cycles.")
-
-        # Plotting ------------------------------------------------
-        plt.figure(figsize=(12, 5))
-
-        offset = 0.02  # tiny bump for predicted points
-
-        # Detetced catches (blue dots at 0)
-        plt.scatter(catch_times, np.zeros_like(catch_times), label='Detected Catches', color='blue', marker='.')
-
-        # Predicted cycles (red crosses slightly above)
-        plt.scatter(predicted_cycles, np.full_like(predicted_cycles, offset), label='Predicted Cycle Starts', color='red', marker='.')
-
-        # Highlight matches
-        for predicted_time in predicted_cycles:
-            close_matches = np.abs(catch_times - predicted_time) <= TOLERANCE
-            if np.any(close_matches):
-                actual_match_time = catch_times[close_matches][0]
-                plt.plot([actual_match_time, predicted_time], [0, offset], color='green', linestyle='--', linewidth=1)
-
-        plt.legend()
-        plt.xlabel('Time (seconds)')
-        plt.title('Estimated Cycle Starts/Ends vs Detected Catch Times')
-        plt.yticks([])
-
-        # FORCE a tight vertical range
-        plt.ylim(-0.05, 0.07)   # <<< prevents huge empty space
-
-        #plt.show()
+    print("Coaching Tips:")
+    variability = std_interval / avg_interval
+    print(f"variability (std dev / mean): {variability:.2f}")
+    if variability > 0.4:
+        print("- Your timing between throws seems inconsistent." \
+        " Some throws are much higher or lower than others. Try to make each throw identical in height.")
+    elif variability > 0.3:
+        print("Your rhythm is pretty good, but there's some room for improvement." \
+        " Focus on maintaining a steady pace throughout your juggling.")  
     else:
-        print("could not find any valid cycle guesses")
+        print("Great job! Your juggling rhythm is very consistent.")  
 
+    
+    # 3) Tempo drift: speeding up or slowing down over time
+    if len(intervals) >= 6:
+        third = len(intervals) // 3
+        early_mean = np.mean(intervals[:third])
+        late_mean = np.mean(intervals[-third:])
+        if late_mean > early_mean * 1.3:
+            print("You’re slowing down as you go. Try to keep the same tempo from start to finish.")
+        elif late_mean < early_mean * 0.9:
+            print("You’re speeding up over time. Try to keep your throws relaxed and steady.")    
 
-def pdf(x, mu=0.0, sigma=1.0):
-    """
-    Gaussian (normal) probability density function.
-      x: value to evaluate
-      mu: mean
-      sigma: standard deviation
-    """
-    coeff = 1.0 / (math.sqrt(2.0 * math.pi) * sigma)
-    exponent = math.exp(-((x - mu) ** 2) / (2.0 * (sigma ** 2)))
-    return coeff * exponent
+    # 4) Pattern match quality
+    if accuracy >= 80:
+        print("Your timing matches the chosen pattern very well. Great job!")
+    elif accuracy >= 50:
+        print("You’re roughly following the pattern, but there are some off-beat cycles. "
+                        "Focus on keeping the throws in a steady groove.")
+    else:
+        print("The timing doesn’t strongly match a repeating pattern yet. "
+                        "Try working on a slower, simpler pattern and aim for very even throws.")
 
+    # 5) Does the detected pattern cover most of the run?
+    if estimated_cycles > 0 and (len(predicted_cycles) / estimated_cycles) < 0.6:
+        print("The detected pattern only lines up with part of the run. "
+                "This could mean extra out-of-rhythm throws or drops between clean cycles.")
 
-def nearestCatch(catch_times, current_time):
-    index = np.argmin(np.abs(catch_times - current_time))
-    return catch_times[index]
+    plotCycles(catch_times, predicted_cycles, predicted_catches)
 
-def plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, original_peaks, clean_peaks):
-    #Visualization--------------------------------------------------------------------
-    # Visualize both graphs with detected peaks side by side
-    fig, ax = plt.subplots(1, 2, figsize=(12, 5))  # Two graphs side by side
-
-    # Cleaned audio
-    ax[0].plot(time_clean, audio_clean)
-    ax[0].plot(time_clean[clean_peaks], audio_clean[clean_peaks], "x", color='red')
-    ax[0].set_title("Detected Peaks (Cleaned & Trimmed Audio)")
-    ax[0].set_xlabel("Time (seconds)")
-    ax[0].set_ylabel("Amplitude")
-
-    # Original audio
-    ax[1].plot(time, audio)
-    ax[1].plot(time[original_peaks], audio[original_peaks], "x", color='red')
-    ax[1].set_title("Detected Peaks (Original Audio)")
-    ax[1].set_xlabel("Time (seconds)")
-    ax[1].set_ylabel("Amplitude")
-
-    plt.tight_layout()
-    plt.show()
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Analyze rhythmic patterns in juggling audio.")
-    parser.add_argument("--file", required=True, help="Name of audio file located in the /data folder. First 5 seconds should be no activity.")
-    parser.add_argument("--pattern", type=int, required=True, help="Vanilla siteswap pattern (like 441, 51)")
-    parser.add_argument("--silence", type=int, required=False, help="Duration of initial silence in seconds (default: 5)",default=SILENCE_DURATION)
-    return parser.parse_args()
-
-def detect_peaks_dynamic(audio_clean, sampling_rate,
-                         min_distance_sec,
-                         height_percentile=99,
-                         prominence_percentile=99):
-    x = np.asarray(audio_clean)
-
-    # abs so we catch both positive & negative spikes
-    abs_x = np.abs(x)
-
-    #  dynamic thresholds
-    # finds the value below which a given percentage of data points fall
-    height_thr = np.percentile(abs_x, height_percentile)
-    # only peaks with prominence above the specified percentile are considered significant
-    prom_thr   = np.percentile(abs_x, prominence_percentile)
-
-    # Enforce a minimum distance in time
-    min_distance = int(sampling_rate * min_distance_sec)
-
-    peaks, properties = find_peaks(
-        x,
-        height=height_thr,
-        distance=min_distance,
-        prominence=prom_thr
-    )
-    return peaks, properties
+    return predicted_cycles
 
 
 # how to run from cmd line:
@@ -468,7 +309,8 @@ def main():
 
     # Convert sample indices to time values for x-axis 
     time_clean = (np.arange(len(audio_clean)) + num_samples) / sampling_rate
-############### write out detected peaks to txt file #####################
+    
+    ############ write out detected peaks to txt file #####################
 
     # Convert sample indices to time values for x-axis
     time_clean = (np.arange(len(audio_clean)) + num_samples) / sampling_rate
@@ -486,13 +328,22 @@ def main():
             f.write(f"{t:.6f},\n")  # 6 decimals = microsecond-ish resolution
 
     print(f"Wrote {len(peak_times_sec)} peak timestamps to {out_path}")
-#################
-    time = np.arange(len(audio)) / (sampling_rate)
-    
-    #plot and analyze intervals
-    #analyzeIntervals(clean_peaks, time_clean, pattern)
+    #################
 
-    #plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, original_peaks, clean_peaks)
+    #plot and analyze intervals
+    predicted_cycles = analyzeIntervals(clean_peaks, time_clean, pattern)
+
+    if predicted_cycles:
+        pattern_out_path = Path("data") / f"{audio_stem}-pattern.txt"
+        with open(pattern_out_path, "w", encoding="utf-8") as f:
+            for t in sorted(predicted_cycles):
+                f.write(f"{t:.6f},\n")
+        print(f"Wrote {len(predicted_cycles)} predicted cycle timestamps to {pattern_out_path}")
+    else:
+        print("No predicted cycle timestamps to write.")
+    
+    time = np.arange(len(audio)) / (sampling_rate)
+    plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, original_peaks, clean_peaks)
 
 if __name__ == "__main__":
     main()
