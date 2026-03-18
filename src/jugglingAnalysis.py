@@ -57,7 +57,6 @@ def reduceNoise(audio, sampling_rate, silence_duration=SILENCE_DURATION):
     return audio_clean
 
 
-
 #------------------------------------------------------------
 # Score a list of candidate cycle start times against detected catches
 # using Gaussian PDF — returns avg log probability
@@ -70,6 +69,7 @@ def scoreCycles(predicted_cycle_starts, catch_times, sigma):
         p = pdf(diff, mu=0, sigma=sigma)
         log_prob_sum += math.log(p)
     return log_prob_sum / len(predicted_cycle_starts)
+
 
 #------------------------------------------------------------
 # Find the best cycle duration and predicted cycle start times
@@ -154,6 +154,38 @@ def findBestCycles(catch_times, pattern_length):
 
 
 #------------------------------------------------------------
+# Try each realistic pattern length and return the one whose
+# best cycle duration scores highest against the catch times.
+# Returns (pattern_length, predicted_cycles, best_cycle_duration,
+#          best_sigma, best_avg_log_prob)
+#------------------------------------------------------------
+def detectPatternLength(catch_times):
+    best_result = None
+    best_score = -np.inf
+
+    for candidate_length in range(2, 6):  # siteswap lengths 2-5 are realistic
+        if len(catch_times) < candidate_length:
+            continue
+
+        predicted_cycles, best_cycle_duration, best_sigma, avg_log_prob = \
+            findBestCycles(catch_times, candidate_length)
+
+        if best_sigma is None:
+            continue
+
+        print(f"  Pattern length {candidate_length}: score = {avg_log_prob:.4f}, "
+              f"cycle duration = {best_cycle_duration:.3f}s")
+
+        if avg_log_prob > best_score:
+            best_score = avg_log_prob
+            best_result = (candidate_length, predicted_cycles,
+                           best_cycle_duration, best_sigma, avg_log_prob)
+
+    return best_result
+
+
+
+#------------------------------------------------------------
 # Analyze the timing intervals between detected peaks to estimate rhythmic juggling cycles
 # ----assumes the times are in order 
 #  paramters:
@@ -164,27 +196,37 @@ def findBestCycles(catch_times, pattern_length):
 #valid cycle guesses found
 #------------------------------------------------------------
 def analyzeIntervals(peaks, time, pattern):
-    pattern_length = len(str(pattern))
     #put intervals btwn catches into data struct
-
     #convert peak indices to times
     catch_times = time[peaks]
-    print(f"Detected {len(catch_times)} catch times.")
 
     if len(catch_times) == 0:
         print("No peaks detected. Try adjusting noise reduction or peak detection params.")
         return []
-    if len(catch_times) < pattern_length:
-        print(f"Not enough catches detected for pattern length {pattern_length}. Either more data is needed for analyzation, \
-              or try adjusting noise reduction or peak detection params.")
-        return []
-    
+    print(f"Detected {len(catch_times)} catch times.")
 
-    predicted_cycles, best_cycle_duration, sigma, best_avg_log_prob = findBestCycles(catch_times, pattern_length)
+    # ── Pattern known vs auto-detect ────────────────────────────────────────
+    if pattern is not None:
+        pattern_length = len(str(pattern))
+        if len(catch_times) < pattern_length:
+            print(f"Not enough catches detected for pattern length {pattern_length}.")
+            return [], []
 
-    if best_cycle_duration is None:
-        print("Could not find any valid cycle guesses.")
-        return []
+        predicted_cycles, best_cycle_duration, best_sigma, best_avg_log_prob = \
+            findBestCycles(catch_times, pattern_length)
+
+        if best_cycle_duration is None:
+            print("Could not find any valid cycle guesses.")
+            return [], []
+    else:
+        print("No pattern provided — attempting to detect pattern from audio...")
+        pattern_length, predicted_cycles, best_cycle_duration, best_sigma, best_avg_log_prob = detectPatternLength(catch_times)
+
+        if best_sigma is None:
+            print("Could not determine pattern length from audio.")
+            return [], []
+
+        print(f"\nBest pattern length detected: {pattern_length}")
         
     #add predicted catches within each cycle
     # In a vanilla siteswap, throws are ideally evenly spaced one beat apart.
@@ -199,7 +241,7 @@ def analyzeIntervals(peaks, time, pattern):
 
     #only plot the best (in terms of accuracy) predictions we got
     # normalize accuracy so it's roughly 0 to 100%
-    accuracy = math.exp(best_avg_log_prob) / pdf(0, 0, sigma) * 100
+    accuracy = math.exp(best_avg_log_prob) / pdf(0, 0, best_sigma) * 100
     print(f"Pattern match score (accuracy): {accuracy}%\n")
 
 

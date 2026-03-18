@@ -1,7 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import argparse
-import sys
+import math
+from scipy.signal import find_peaks, medfilt
+
 
 
 # ================================================================
@@ -140,7 +142,7 @@ def pdf(x, mu=0.0, sigma=1.0):
 def parse_args():
     parser = argparse.ArgumentParser(description="Analyze rhythmic patterns in juggling audio.")
     parser.add_argument("--file", required=True, help="Name of audio file located in the /data folder. First 5 seconds should be no activity.")
-    parser.add_argument("--pattern", type=int, required=True, help="Vanilla siteswap pattern (like 441, 51)")
+    parser.add_argument("--pattern", type=int, required=False, help="Vanilla siteswap pattern (like 441, 51)")
     parser.add_argument("--silence", type=int, required=False, help="Duration of initial silence in seconds (default: 5)",default=SILENCE_DURATION)
     return parser.parse_args()
 
