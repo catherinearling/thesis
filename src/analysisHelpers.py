@@ -9,7 +9,7 @@ from scipy.signal import find_peaks, medfilt
 # ================================================================
 # GLOBAL CONFIGURATION
 # ================================================================
-TOLERANCE = 0.06  # 50ms tolerance for matching predicted to actual throw
+TOLERANCE = 0.06  # 60ms tolerance for matching predicted to actual throw
 
 SILENCE_DURATION = 5  # first 5 seconds assumed to be no activity by default.
 
@@ -100,9 +100,10 @@ def plotCycles(catch_times, predicted_cycles, predicted_catches):
     #plt.show()
 
 
+#returns nearest catch to current_time in catch_times array. also returns the index of this catch
 def nearestCatch(catch_times, current_time):
     index = np.argmin(np.abs(catch_times - current_time))
-    return catch_times[index]
+    return catch_times[index], index
 
 def plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, original_peaks, clean_peaks):
     #Visualization--------------------------------------------------------------------

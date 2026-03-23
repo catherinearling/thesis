@@ -64,7 +64,7 @@ def reduceNoise(audio, sampling_rate, silence_duration=SILENCE_DURATION):
 def scoreCycles(predicted_cycle_starts, catch_times, sigma):
     log_prob_sum = 0.0
     for predicted_time in predicted_cycle_starts:
-        nearest = nearestCatch(catch_times, predicted_time)
+        nearest, _idx = nearestCatch(catch_times, predicted_time)
         diff = nearest - predicted_time
         p = pdf(diff, mu=0, sigma=sigma)
         log_prob_sum += math.log(p)
@@ -109,27 +109,17 @@ def findBestCycles(catch_times, pattern_length):
             predicted_cycle_starts.append(catch_times[i])
             predicted_cycle_starts.append(catch_times[begin])
             
-            curr_num_matches = 0
             #step forwards starting at end to find backwards matches for this cycle duration guess
             current_time = catch_times[i]
             while (current_time + cycle_duration_guess) <= catch_times[-1]:
                 current_time += cycle_duration_guess
                 predicted_cycle_starts.append(current_time)
 
-                # # If we step one cycle length away from our current time, 
-                # # do we land on a detected catch? (within tolerance)
-                # closest = nearestCatch(catch_times, current_time)
-                
-
             #step backwards starting at index i-pattern_length to find forwards matches for this cycle duration guess
             current_time = catch_times[begin]
             while (current_time - cycle_duration_guess) >= catch_times[0]:
                 current_time -= cycle_duration_guess
                 predicted_cycle_starts.insert(0, current_time)
-
-                # # If we step one cycle length away from our current time, 
-                # # do we land on a detected catch? (within tolerance)
-                # closest = nearestCatch(catch_times, current_time)
 
             # --------- Scoring ---------
             # A candidate cycle is “good” if its predicted starts sit consistently 
@@ -140,8 +130,7 @@ def findBestCycles(catch_times, pattern_length):
             avg_log_prob = scoreCycles(predicted_cycle_starts, catch_times, sigma)
 
             # Initialize best guess on first valid prediction
-            #otherwise, keep this prediction if it has best accuracy so far, and is a valid accuracy (0 < acc < 1)
-                #valid accuracy means we are not overpredicting the amount of cycles nor underpredicting
+            #otherwise, keep this prediction if it has best accuracy so far
             if (avg_log_prob > best_avg_log_prob) or (not initialized):
                 if not initialized:
                     initialized = True
@@ -163,7 +152,7 @@ def detectPatternLength(catch_times):
     best_result = None
     best_score = -np.inf
 
-    for candidate_length in range(2, 6):  # siteswap lengths 2-5 are realistic
+    for candidate_length in range(1, 6):  # siteswap lengths 2-5 are realistic
         if len(catch_times) < candidate_length:
             continue
 
@@ -206,19 +195,7 @@ def analyzeIntervals(peaks, time, pattern):
     print(f"Detected {len(catch_times)} catch times.")
 
     # ── Pattern known vs auto-detect ────────────────────────────────────────
-    if pattern is not None:
-        pattern_length = len(str(pattern))
-        if len(catch_times) < pattern_length:
-            print(f"Not enough catches detected for pattern length {pattern_length}.")
-            return [], []
-
-        predicted_cycles, best_cycle_duration, best_sigma, best_avg_log_prob = \
-            findBestCycles(catch_times, pattern_length)
-
-        if best_cycle_duration is None:
-            print("Could not find any valid cycle guesses.")
-            return [], []
-    else:
+    if pattern is None:
         print("No pattern provided — attempting to detect pattern from audio...")
         pattern_length, predicted_cycles, best_cycle_duration, best_sigma, best_avg_log_prob = detectPatternLength(catch_times)
 
@@ -227,6 +204,19 @@ def analyzeIntervals(peaks, time, pattern):
             return [], []
 
         print(f"\nBest pattern length detected: {pattern_length}")
+
+    else:
+        pattern_length = len(str(pattern))
+    
+    if len(catch_times) < pattern_length:
+        print(f"Not enough catches detected for pattern length {pattern_length}.")
+        return [], []
+    predicted_cycles, best_cycle_duration, best_sigma, best_avg_log_prob = \
+        findBestCycles(catch_times, pattern_length)
+
+    if best_cycle_duration is None:
+        print("Could not find any valid cycle guesses.")
+        return [], []
         
     #add predicted catches within each cycle
     # In a vanilla siteswap, throws are ideally evenly spaced one beat apart.
@@ -239,56 +229,158 @@ def analyzeIntervals(peaks, time, pattern):
     #now, predicted_catches should have all the predicted catch times based on the best cycle duration guess,
     # including cycle starts
 
-    #only plot the best (in terms of accuracy) predictions we got
-    # normalize accuracy so it's roughly 0 to 100%
-    accuracy = math.exp(best_avg_log_prob) / pdf(0, 0, best_sigma) * 100
-    print(f"Pattern match score (accuracy): {accuracy}%\n")
-
-
     # Coaching Tips ------------------------------------------------
-    intervals = np.diff(catch_times)
-    avg_interval = np.mean(intervals)
-    std_interval = np.std(intervals)
-    estimated_cycles = len(catch_times) / pattern_length
-
     print("Coaching Tips:")
-    variability = std_interval / avg_interval
-    print(f"variability (std dev / mean): {variability:.2f}")
-    if variability > 0.4:
-        print("- Your timing between throws seems inconsistent." \
-        " Some throws are much higher or lower than others. Try to make each throw identical in height.")
-    elif variability > 0.3:
-        print("Your rhythm is pretty good, but there's some room for improvement." \
-        " Focus on maintaining a steady pace throughout your juggling.")  
-    else:
-        print("Great job! Your juggling rhythm is very consistent.")  
 
+    # Compute real timing error: residuals between each actual catch and its nearest predicted catch
+    predicted_arr = np.array(predicted_catches)
+
+    # These two lists will be built in parallel — one entry per detected catch.
+    # residuals: how far off (in seconds) each actual catch was from its ideal predicted time
+    # beat_positions: which beat slot within the pattern cycle that catch belongs to (0, 1, 2, 0, 1, 2, ...)
+    residuals = []
+    beat_positions = []
     
-    # 3) Tempo drift: speeding up or slowing down over time
+    for ct in catch_times:
+        nearest_predicted, nearest_idx = nearestCatch(predicted_arr, ct)
+
+        # Positive means the juggler caught it LATE (after the ideal moment).
+        # Negative means they caught it EARLY (before the ideal moment).
+        residuals.append(ct - nearest_predicted)
+                
+        # nearest_idx % pattern_length gives which beat slot within the cycle this catch
+        # aligns to. We don't know which siteswap throw value that corresponds to because
+        # the cycle anchor could start at any throw in the pattern — so we just label by
+        # position number and avoid siteswap lookups here.
+        beat_positions.append(nearest_idx % pattern_length)
+        
+    residuals = np.array(residuals)
+    beat_positions = np.array(beat_positions)
+
+    # 1) analyze each beat position in the cycle separately, since patterns
+    # can be made of throws of differing heights/durations. we care
+    # about whether the juggler is consistent about their variation 
+    #   like in a 441, consistent "long long short" is okay 
+    #   but having it be "long long short short long short long long long" would be wrong
+    flagged_any = False
+    for pos in range(pattern_length):
+
+        # Boolean mask: True only for catches that aligned to this beat position.
+        #      if beat_positions = [0, 1, 2, 0, 1, 2] and pos=1,
+        #      mask =              [F, T, F, F, T, F] 
+        mask = beat_positions == pos
+        
+        # Pull out only the residuals for this beat position using the mask.
+        pos_residuals = residuals[mask]
+
+        # Skip if we don't have enough data points to say anything meaningful
+        #    fewer than 3 samples, std and mean are too noisy to act on.
+        if len(pos_residuals) < 3:
+            continue
+
+
+        # std (standard deviation) measures spread: how much the timing varies
+        # from catch to catch at this position. 
+        # High spread means sometimes early, sometimes late.
+        #       the throw height is inconsistent.
+        # Multiply by 1000 to convert seconds -> milliseconds for readability.
+        spread_ms = np.std(pos_residuals) * 1000   # real ms spread for this beat position
+
+        # mean measures systematic bias — if the average residual is consistently
+        # positive, the juggler always catches late here; negative means always early.
+        # Bias and spread are different problems: you can be consistently late with
+        # tight spread (same mistake every time) or randomly scattered with low bias
+        bias_ms = np.mean(pos_residuals) * 1000  # systematic early/late bias
+
+
+        # Flag inconsistency from catch to catch
+        if spread_ms > 100:
+            flagged_any = True
+            print(f"- Beat position {pos+1} (of {pattern_length}) is inconsistent "
+                  f"(±{spread_ms:.0f}ms). Focus on making this throw the same height each time.")
+
+        # Flag systematic bias 
+        # The cause of a catch landing late or early is almost always the PRECEDING
+        # throw — if you threw too high, gravity takes longer and the catch comes late.
+        if abs(bias_ms) > 40:
+            direction = "late" if bias_ms > 0 else "early"
+            flagged_any = True
+            print(f"- Beat position {pos+1} (of {pattern_length}) consistently lands "
+                  f"{direction} by ~{abs(bias_ms):.0f}ms. "
+                  "This usually means the preceding throw is mis-timed.")
+
+    # If neither check triggered for any beat position, the juggler is doing well.
+    if not flagged_any:
+        print("- Great consistency across all throw positions!")
+    
+    # 2) Tempo drift
+    intervals = np.diff(catch_times)
     if len(intervals) >= 6:
         third = len(intervals) // 3
         early_mean = np.mean(intervals[:third])
-        late_mean = np.mean(intervals[-third:])
-        if late_mean > early_mean * 1.3:
-            print("You’re slowing down as you go. Try to keep the same tempo from start to finish.")
-        elif late_mean < early_mean * 0.9:
-            print("You’re speeding up over time. Try to keep your throws relaxed and steady.")    
+        mid_mean   = np.mean(intervals[third:2*third])
+        late_mean  = np.mean(intervals[2*third:])
+        drift = (late_mean - early_mean) / mid_mean
+        if drift > 0.15:
+            print(f"- You're slowing down as you go ({drift*100:.0f}% tempo drop). "
+                  "Try to lock into a steady pace from the very first throw.")
+        elif drift < -0.15:
+            print(f"- You're speeding up over time ({abs(drift)*100:.0f}% tempo increase). "
+                  "Rushing is usually a sign of tension — relax your throws.")
 
-    # 4) Pattern match quality
-    if accuracy >= 80:
-        print("Your timing matches the chosen pattern very well. Great job!")
-    elif accuracy >= 50:
-        print("You’re roughly following the pattern, but there are some off-beat cycles. "
-                        "Focus on keeping the throws in a steady groove.")
-    else:
-        print("The timing doesn’t strongly match a repeating pattern yet. "
-                        "Try working on a slower, simpler pattern and aim for very even throws.")
-
-    # 5) Does the detected pattern cover most of the run?
+    # 3) Pattern coverage
+    estimated_cycles = len(catch_times) / pattern_length
     if estimated_cycles > 0 and (len(predicted_cycles) / estimated_cycles) < 0.6:
-        print("The detected pattern only lines up with part of the run. "
-                "This could mean extra out-of-rhythm throws or drops between clean cycles.")
+        print("- The detected pattern only lines up with part of the run. "
+              "This could mean drops, extra throws, or an out-of-rhythm burst mid-run.")
 
+    # 5) Phase slip detection
+    # A phase slip looks like: good alignment, then a stretch of misses, then good alignment again.
+    # This is different from general inconsistency (which is spread randomly throughout).
+    # We detect it by checking whether the misses are clustered together in time,
+    # rather than scattered evenly across the run.
+
+    # Classify each catch as a hit or miss based on TOLERANCE
+    hit_mask = np.abs(residuals) <= TOLERANCE  # True = on time, False = off beat
+
+    # Only worth checking if there's a meaningful number of misses to cluster
+    miss_rate = 1 - np.mean(hit_mask)
+    if miss_rate > 0.3:  # more than 30% of catches are off-beat
+        
+        # Split the run into thirds and check where the misses are concentrated
+        n = len(hit_mask)
+        third = n // 3
+        miss_rate_early = 1 - np.mean(hit_mask[:third])
+        miss_rate_mid   = 1 - np.mean(hit_mask[third:2*third])
+        miss_rate_late  = 1 - np.mean(hit_mask[2*third:])
+
+        # If one third is much worse than the others, misses are clustered — phase slip
+        miss_rates = [miss_rate_early, miss_rate_mid, miss_rate_late]
+        worst = max(miss_rates)
+        best  = min(miss_rates)
+
+        if worst > best + 0.4:  # large contrast between sections
+            worst_section = ["early", "middle", "late"][miss_rates.index(worst)]
+            print(f"- There's a cluster of off-beat catches in the {worst_section} portion of the run. "
+                  "This could be a single hiccup (a dropped ball, an extra throw, or one "
+                  "badly timed catch) that threw off the cycle alignment for a stretch — "
+                  "it doesn't necessarily mean your rhythm was bad the whole time.")
+
+
+    # 4) Overall summary
+    # Accuracy: what fraction of catches landed within TOLERANCE of their predicted beat.
+    hits = np.sum(np.abs(residuals) <= TOLERANCE)
+    accuracy = (hits / len(catch_times)) * 100
+    print(f"\nOverall pattern match score: {accuracy:.1f}%")
+    
+    if accuracy >= 80:
+        print("Your timing matches the pattern very well — keep it up!")
+    elif accuracy >= 50:
+        print("You're roughly following the pattern. Focus on the tips above to sharpen your timing.")
+    else:
+        print("The timing doesn't strongly match a repeating pattern yet. "
+              "Try a simpler pattern at a slower pace and aim for even, relaxed throws.")
+        
     plotCycles(catch_times, predicted_cycles, predicted_catches)
 
     return predicted_cycles

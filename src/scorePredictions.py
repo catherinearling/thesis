@@ -108,191 +108,105 @@ def evaluate_event_predictions(
     }
 
 
-# def evaluate_event_predictions(
-#     truth, #array of true timestamps
-#     preds, #array of generated timestamps
-#     tolerance=0.05 #how close a generated timestamp has to be to the truth to be considered a match
-# ):
-#     i = 0
-#     j= 0
-#     matches = []
-
-#     # go thru arrays and see if the times match up. 
-#     # a prediction can match forwards or backwards
-#     while i < len(truth) and j < len(preds):
-#         dif = preds[j] - truth[i]
-
-#         #it's a match if the prediction is within the tolerance
-#         if abs(dif) <= tolerance:
-#             #put the set of truth and its match into a list
-#             matches.append((truth[i], preds[j]))
-#             i += 1
-#             j += 1
-#         #if the current prediction is too far behind the truths, 
-#         # skip over it and go to next prediction index
-#         elif preds[j] < truth[i] - tolerance:
-#             j += 1
-#         # otherwise increase the truth index
-#         else:
-#             i += 1
-
-#     tp = len(matches)#how many actual catches we detected 
-#     fp = len(preds) - tp#how many of our predictions were wrong
-#     fn = len(truth) - tp#how many catches we didnt detect
-
-#     #how many predictions were correct
-#     precision = tp / (tp + fp) if (tp + fp) else 0.0
-
-#     #how many true events were found
-#     recall = tp / (tp + fn) if (tp + fn) else 0.0
-
-#     #balances and combines precision and recall 
-#     f1 = (
-#         2 * precision * recall / (precision + recall)
-#         if (precision + recall) else 0.0
-#     )
-
-#     #see how numerically close each match actually is,
-#     #so that we can see when our predictions get closer to exact 
-#     #timestamp (like being .04 away vs .001 away)
-#     averageDistance = (
-#         sum(abs(prediction - truth) for truth, prediction in matches) / tp
-#         if tp > 0 else float("inf")
-#     )
-
-#     return {
-#         "TP": tp,
-#         "FP": fp,
-#         "FN": fn,
-#         "precision": precision,
-#         "recall": recall,
-#         "f1": f1,
-#         "avg": averageDistance, 
-#         "matches": matches,
-#     }
-
-
 real = [
-6.057569,
-6.296212,
-6.546788,
-6.749635,
-7.004188,
-7.203058,
-7.457611,
-7.680345,
-7.918988,
-8.101948,
-8.376388,
-8.583213,
-8.841743,
-9.040613,
-9.291189,
-9.498013,
-9.744611,
-9.951436,
-10.23383,
-10.408836,
-10.675321,
-10.886123,
-11.120789,
-11.3475,
-11.582166,
-11.781036,
-12.051499,
-12.234459,
-12.504922,
-12.675949,
-12.982209,
-13.161191,
-13.411767,
-13.602682,
-13.873144,
-14.04815,
-14.330545,
-14.529414,
-14.783967,
-14.96295,
-15.245345,
-15.42035,
-15.698768,
-15.881728,
-16.160145,
-16.339128,
-16.621523,
-16.788573,
-17.070968,
-17.273815,
-17.528368,
-17.687464,
-17.985768,
-18.18066,
-18.435213,
-18.582377,
-18.892614,
-19.067619,
-19.532974,
+6.16667,
+6.527498,
+6.910897,
+7.250618,
+7.643724,
+7.988299,
+8.366845,
+8.687153,
+9.094819,
+9.439393,
+9.827646,
+10.133395,
+10.473116,
+10.953578,
+11.157411,
+11.492279,
+11.846559,
+12.20084,
+12.550267,
+12.904548,
+13.253975,
+13.593696,
+13.96739,
+14.32167,
+14.685657,
+15.025378,
+15.365099,
+15.714527,
+16.112486,
+16.405333,
+16.821047,
+17.175327,
+17.495636,
+17.888741,
+18.218756,
+18.597303,
+18.937024,
+19.247626,
+19.60676,
+19.980453,
+20.334733,
+20.664748,
+20.999616,
+21.35875,
+21.732443,
+22.077017,
+22.407032,
 ]
 
 other = [
-6.064563,
-6.302458,
-6.534104,
-6.998250,
-7.199708,
-7.456042,
-7.666750,
-7.734042,
-7.920292,
-8.103729,
-8.372729,
-8.585646,
-8.837083,
-9.017437,
-9.293479,
-9.501729,
-9.744458,
-9.953938,
-10.230688,
-10.400729,
-10.674812,
-10.875521,
-11.129458,
-11.331854,
-11.598458,
-11.781083,
-12.042292,
-12.501625,
-12.670979,
-13.147104,
-13.407937,
-13.599875,
-13.884438,
-14.048042,
-14.323521,
-14.525854,
-14.780479,
-14.965375,
-15.237104,
-15.427938,
-15.691812,
-15.887042,
-16.163896,
-16.340625,
-16.611146,
-16.779542,
-17.056750,
-17.264458,
-17.327833,
-17.557604,
-17.684729,
-17.978458,
-18.170458,
-18.233521,
-18.586417,
-18.898688,
-19.056021,
-19.522229,
+6.210854,
+6.527396,
+6.908083,
+7.241042,
+7.629937,
+7.965292,
+8.355937,
+8.682875,
+8.791625,
+9.078375,
+9.427854,
+9.805250,
+10.129625,
+10.455854,
+10.945667,
+11.151729,
+11.478958,
+11.841167,
+12.193833,
+12.566062,
+12.900333,
+13.260896,
+13.595771,
+13.667438,
+13.947313,
+14.317750,
+14.680229,
+15.032354,
+15.095854,
+15.362354,
+16.102563,
+16.400562,
+16.815396,
+17.160479,
+17.237521,
+17.481667,
+17.864583,
+18.211521,
+18.586854,
+18.925667,
+19.235208,
+19.353813,
+19.984333,
+20.336833,
+20.662417,
+21.341833,
+21.710375,
+22.405604,
 
 ]
 
