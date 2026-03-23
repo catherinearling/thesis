@@ -379,7 +379,7 @@ def analyzeIntervals(peaks, time, pattern):
         print("You're roughly following the pattern. Focus on the tips above to sharpen your timing.")
     else:
         print("The timing doesn't strongly match a repeating pattern yet. "
-              "Try a simpler pattern at a slower pace and aim for even, relaxed throws.")
+              "Try a slower pace and aim for even, relaxed throws.")
         
     plotCycles(catch_times, predicted_cycles, predicted_catches)
 
