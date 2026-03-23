@@ -328,13 +328,7 @@ def analyzeIntervals(peaks, time, pattern):
             print(f"- You're speeding up over time ({abs(drift)*100:.0f}% tempo increase). "
                   "Rushing is usually a sign of tension — relax your throws.")
 
-    # 3) Pattern coverage
-    estimated_cycles = len(catch_times) / pattern_length
-    if estimated_cycles > 0 and (len(predicted_cycles) / estimated_cycles) < 0.6:
-        print("- The detected pattern only lines up with part of the run. "
-              "This could mean drops, extra throws, or an out-of-rhythm burst mid-run.")
-
-    # 5) Phase slip detection
+    # 3) Phase slip detection
     # A phase slip looks like: good alignment, then a stretch of misses, then good alignment again.
     # This is different from general inconsistency (which is spread randomly throughout).
     # We detect it by checking whether the misses are clustered together in time,
