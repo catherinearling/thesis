@@ -236,9 +236,9 @@ def analyzeIntervals(peaks, time, pattern):
     predicted_arr = np.array(predicted_catches)
 
     # These two lists will be built in parallel — one entry per detected catch.
-    # residuals: how far off (in seconds) each actual catch was from its ideal predicted time
+    # remainders: how far off (in seconds) each actual catch was from its ideal predicted time
     # beat_positions: which beat slot within the pattern cycle that catch belongs to (0, 1, 2, 0, 1, 2, ...)
-    residuals = []
+    remainders = []
     beat_positions = []
     
     for ct in catch_times:
@@ -246,15 +246,15 @@ def analyzeIntervals(peaks, time, pattern):
 
         # Positive means the juggler caught it LATE (after the ideal moment).
         # Negative means they caught it EARLY (before the ideal moment).
-        residuals.append(ct - nearest_predicted)
+        remainders.append(ct - nearest_predicted)
                 
         # nearest_idx % pattern_length gives which beat slot within the cycle this catch
         # aligns to. We don't know which siteswap throw value that corresponds to because
         # the cycle anchor could start at any throw in the pattern — so we just label by
-        # position number and avoid siteswap lookups here.
+        # position number
         beat_positions.append(nearest_idx % pattern_length)
         
-    residuals = np.array(residuals)
+    remainders = np.array(remainders)
     beat_positions = np.array(beat_positions)
 
     # 1) analyze each beat position in the cycle separately, since patterns
@@ -271,7 +271,7 @@ def analyzeIntervals(peaks, time, pattern):
         mask = beat_positions == pos
         
         # Pull out only the residuals for this beat position using the mask.
-        pos_residuals = residuals[mask]
+        pos_residuals = remainders[mask]
 
         # Skip if we don't have enough data points to say anything meaningful
         #    fewer than 3 samples, std and mean are too noisy to act on.
@@ -335,7 +335,7 @@ def analyzeIntervals(peaks, time, pattern):
     # rather than scattered evenly across the run.
 
     # Classify each catch as a hit or miss based on TOLERANCE
-    hit_mask = np.abs(residuals) <= TOLERANCE  # True = on time, False = off beat
+    hit_mask = np.abs(remainders) <= TOLERANCE  # True = on time, False = off beat
 
     # Only worth checking if there's a meaningful number of misses to cluster
     miss_rate = 1 - np.mean(hit_mask)
@@ -363,7 +363,7 @@ def analyzeIntervals(peaks, time, pattern):
 
     # 4) Overall summary
     # Accuracy: what fraction of catches landed within TOLERANCE of their predicted beat.
-    hits = np.sum(np.abs(residuals) <= TOLERANCE)
+    hits = np.sum(np.abs(remainders) <= TOLERANCE)
     accuracy = (hits / len(catch_times)) * 100
     print(f"\nOverall pattern match score: {accuracy:.1f}%")
     
