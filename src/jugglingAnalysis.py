@@ -25,11 +25,11 @@ def reduceNoise(audio, sampling_rate, silence_duration=SILENCE_DURATION):
     noise_region = S_full[:, :num_silence_frames] 
     noise_power = np.mean(noise_region, axis=1) #axis=1 ensures mean is calc for each freq band
 
-    noise_mean = np.mean(noise_region, axis=1)
-    noise_std  = np.std(noise_region, axis=1)
+    # noise_mean = np.mean(noise_region, axis=1)
+    # noise_std  = np.std(noise_region, axis=1)
+    # noise_margin_std = 1.2  # how much above the mean noise power to set threshold
     # threshold is mean + k * std, so only clearly-above-noise stuff survives
-    noise_margin_std = 1.2  # how much above the mean noise power to set threshold
-    noise_threshold = noise_mean + noise_margin_std * noise_std
+    #noise_threshold = noise_mean + noise_margin_std * noise_std
 
 
     # Create a binary mask that identifies significant audio regions (above noise power threshold)
