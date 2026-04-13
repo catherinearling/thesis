@@ -16,7 +16,8 @@ SILENCE_DURATION = 5  # first 5 seconds assumed to be no activity by default.
 PEAK_DETECTION_PARAMS = {
     "height": 0.0005,  # minimum height of peaks. a value determined from data
     "distance_sec": 0.06,  # minimum time between peaks in seconds. value determined from data
-    "prominence": 0.005 # how much a peak has to "stand out" relative to its surroundings
+    "prominence": 0.005, # how much a peak has to "stand out" relative to its surroundings
+    "noisy_prominence": 0.1 #stricter prominence for really noisy data
 }
 
 #for analyzing rhythm of detected catches
@@ -56,22 +57,22 @@ def longest_common_subsequence(seq1, seq2, tolerance=TOLERANCE):
 # Plot detected catches, predicted cycle starts, and predicted
 # beat catches, with match lines
 #------------------------------------------------------------
-def plotCycles(catch_times, predicted_cycles, predicted_catches):
+def plotCycles(catch_times, predicted_cycles, predicted_catches, pattern):
     plt.figure(figsize=(12, 5))
 
     offset = 0.02  # tiny bump for predicted points
     offset_catches = 0.04   # orange dots: predicted within-cycle catches 
 
     # Detetced catches (blue dots at 0)
-    plt.scatter(catch_times, np.zeros_like(catch_times), label='Detected Catches', color='blue', marker='.')
+    plt.scatter(catch_times, np.zeros_like(catch_times), label='Actual catches', color='blue', marker='.')
 
     # Predicted cycles (red crosses slightly above)
-    plt.scatter(predicted_cycles, np.full_like(predicted_cycles, offset), label='Predicted Cycle Starts', color='red', marker='.')
+    plt.scatter(predicted_cycles, np.full_like(predicted_cycles, offset), label='Expected cycle starts', color='red', marker='.')
 
     # Predicted individual catches within cycles
     predicted_catches_arr = np.array(predicted_catches)
     plt.scatter(predicted_catches_arr, np.full_like(predicted_catches_arr, offset_catches),
-                label='Predicted Beat Catches', color='orange', marker='|', s=60)
+                label='Expected catch positions', color='orange', marker='|', s=60)
 
 
     # Highlight matches
@@ -79,7 +80,7 @@ def plotCycles(catch_times, predicted_cycles, predicted_catches):
         close_matches = np.abs(catch_times - predicted_time) <= TOLERANCE
         if np.any(close_matches):
             actual_match_time = catch_times[close_matches][0]
-            plt.plot([actual_match_time, predicted_time], [0, offset], color='green', linestyle='--', linewidth=1)
+            plt.plot([actual_match_time, predicted_time], [0, offset], color='green', linestyle='--', linewidth=1.5)
 
     # Highlight matches between predicted beat catches and detected catches
     for predicted_time in predicted_catches:
@@ -87,11 +88,11 @@ def plotCycles(catch_times, predicted_cycles, predicted_catches):
         if np.any(close_matches):
             actual_match_time = catch_times[close_matches][0]
             plt.plot([actual_match_time, predicted_time], [0, offset_catches],
-                        color='purple', linestyle=':', linewidth=0.8)
+                        color='purple', linestyle=':', linewidth=1.2)
 
     plt.legend()
     plt.xlabel('Time (seconds)')
-    plt.title('Estimated Cycle Starts/Ends vs Detected Catch Times')
+    plt.title(f'Estimated Cycle Starts vs Detected Catch Times for {str(pattern)}')
     plt.yticks([])
 
     # FORCE a tight vertical range
@@ -110,17 +111,17 @@ def plotPeaksComparison(time, time_clean, audio, audio_clean, sampling_rate, ori
     # Visualize both graphs with detected peaks side by side
     fig, ax = plt.subplots(1, 2, figsize=(12, 5))  # Two graphs side by side
 
-    # Cleaned audio
-    ax[0].plot(time_clean, audio_clean)
-    ax[0].plot(time_clean[clean_peaks], audio_clean[clean_peaks], "x", color='red')
-    ax[0].set_title("Detected Peaks (Cleaned & Trimmed Audio)")
+    # Original audio
+    ax[0].plot(time, audio)
+    ax[0].plot(time[original_peaks], audio[original_peaks], "x", color='red')
+    ax[0].set_title("Detected Peaks (Raw Audio)")
     ax[0].set_xlabel("Time (seconds)")
     ax[0].set_ylabel("Amplitude")
 
-    # Original audio
-    ax[1].plot(time, audio)
-    ax[1].plot(time[original_peaks], audio[original_peaks], "x", color='red')
-    ax[1].set_title("Detected Peaks (Original Audio)")
+    # Cleaned audio
+    ax[1].plot(time_clean, audio_clean)
+    ax[1].plot(time_clean[clean_peaks], audio_clean[clean_peaks], "x", color='red')
+    ax[1].set_title("Detected Peaks (Filtered & Trimmed Audio)")
     ax[1].set_xlabel("Time (seconds)")
     ax[1].set_ylabel("Amplitude")
 

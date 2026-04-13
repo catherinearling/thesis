@@ -25,18 +25,10 @@ def reduceNoise(audio, sampling_rate, silence_duration=SILENCE_DURATION):
     noise_region = S_full[:, :num_silence_frames] 
     noise_power = np.mean(noise_region, axis=1) #axis=1 ensures mean is calc for each freq band
 
-    # noise_mean = np.mean(noise_region, axis=1)
-    # noise_std  = np.std(noise_region, axis=1)
-    # noise_margin_std = 1.2  # how much above the mean noise power to set threshold
-    # threshold is mean + k * std, so only clearly-above-noise stuff survives
-    #noise_threshold = noise_mean + noise_margin_std * noise_std
-
-
     # Create a binary mask that identifies significant audio regions (above noise power threshold)
     #      a mask is a filter that IDs important data points
     #      any val in S_full > corresponding noise power is true (keep it)
     mask = S_full > noise_power[:, None]
-    #mask = S_full > noise_threshold[:, None]
 
     # Convert boolean mask to float values (1 for True, 0 for False)
     mask = mask.astype(float)
@@ -126,7 +118,7 @@ def findBestCycles(catch_times, pattern_length):
             # close to real catch times
             
             # Choose sigma (the expected jitter around ideal times)
-            sigma = TOLERANCE*0.85 #less strict for bad matches if its bigger
+            sigma = TOLERANCE*0.85 # bigger value means it's less strict for bad matches
             avg_log_prob = scoreCycles(predicted_cycle_starts, catch_times, sigma)
 
             # Initialize best guess on first valid prediction
@@ -375,7 +367,7 @@ def analyzeIntervals(peaks, time, pattern):
         print("The timing doesn't strongly match a repeating pattern yet. "
               "Try a slower pace and aim for even, relaxed throws.")
         
-    plotCycles(catch_times, predicted_cycles, predicted_catches)
+    plotCycles(catch_times, predicted_cycles, predicted_catches, pattern)
 
     return predicted_cycles
 
