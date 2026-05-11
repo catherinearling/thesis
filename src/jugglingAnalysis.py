@@ -193,7 +193,7 @@ def analyzeIntervals(peaks, time, pattern):
 
         if best_sigma is None:
             print("Could not determine pattern length from audio.")
-            return [], []
+            return []
 
         print(f"\nBest pattern length detected: {pattern_length}")
 
@@ -202,13 +202,13 @@ def analyzeIntervals(peaks, time, pattern):
     
     if len(catch_times) < pattern_length:
         print(f"Not enough catches detected for pattern length {pattern_length}.")
-        return [], []
+        return []
     predicted_cycles, best_cycle_duration, best_sigma, best_avg_log_prob = \
         findBestCycles(catch_times, pattern_length)
 
     if best_cycle_duration is None:
         print("Could not find any valid cycle guesses.")
-        return [], []
+        return []
         
     #add predicted catches within each cycle
     # In a vanilla siteswap, throws are ideally evenly spaced one beat apart.
@@ -299,7 +299,7 @@ def analyzeIntervals(peaks, time, pattern):
             flagged_any = True
             print(f"- Beat position {pos+1} (of {pattern_length}) consistently lands "
                   f"{direction} by ~{abs(bias_ms):.0f}ms. "
-                  "This usually means the preceding throw is mis-timed.")
+                  "This usually means the preceding throw is mistimed.")
 
     # If neither check triggered for any beat position, the juggler is doing well.
     if not flagged_any:

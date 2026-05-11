@@ -17,7 +17,7 @@ PEAK_DETECTION_PARAMS = {
     "height": 0.0005,  # minimum height of peaks. a value determined from data
     "distance_sec": 0.06,  # minimum time between peaks in seconds. value determined from data
     "prominence": 0.005, # how much a peak has to "stand out" relative to its surroundings
-    "noisy_prominence": 0.1 #stricter prominence for really noisy data
+    "noisy_prominence": 0.1 #stricter prominence for really noisy
 }
 
 #for analyzing rhythm of detected catches
@@ -64,7 +64,7 @@ def plotCycles(catch_times, predicted_cycles, predicted_catches, pattern):
     offset_catches = 0.04   # orange dots: predicted within-cycle catches 
 
     # Detetced catches (blue dots at 0)
-    plt.scatter(catch_times, np.zeros_like(catch_times), label='Actual catches', color='blue', marker='.')
+    plt.scatter(catch_times, np.zeros_like(catch_times), label='Program Detected Catches', color='blue', marker='.')
 
     # Predicted cycles (red crosses slightly above)
     plt.scatter(predicted_cycles, np.full_like(predicted_cycles, offset), label='Expected cycle starts', color='red', marker='.')
