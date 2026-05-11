@@ -1,13 +1,13 @@
 # Juggling Audio Analysis
 
-A Python tool that analyzes audio recordings of juggling to detect catch times, identify rhythmic patterns, and provide coaching feedback on timing consistency.
+A Python tool that analyzes audio recordings of juggling to detect catch times, identify rhythmic patterns, and provide coaching feedback.
 
 ## What It Does
 
 - Loads a `.wav` recording of juggling
 - Reduces background noise using Short-Time Fourier Transform (STFT)
 - Detects audio peaks corresponding to catch/throw sounds
-- Estimates cycle timing based on a known or auto-detected siteswap pattern
+- Estimates cycle timing based on a known (recommended) or auto-detected siteswap pattern
 - Outputs coaching tips on timing consistency, tempo drift, and phase slips
 - Exports detected peak timestamps and predicted cycle start times to `.txt` files
 - Visualizes detected vs. predicted catches in a plot
@@ -16,10 +16,10 @@ A Python tool that analyzes audio recordings of juggling to detect catch times, 
 
 ```
 audio/
-├── data/               # Audio input files and output .txt files go here
+├── data/   # Audio input files and output .txt files go here
 ├── src/
 │   ├── jugglingAnalysis.py   # Main entry point
-│   └── analysisHelpers.py    # Shared utilities (peak detection, plotting, etc.)
+│   └── analysisHelpers.py    # Utilities (peak detection, plotting, etc.)
 ```
 
 ## Setup
@@ -40,7 +40,7 @@ python .\src\jugglingAnalysis.py --file "yourfile.wav" --pattern 441
 |---|---|---|
 | `--file` | Yes | Name of the `.wav` file in the `data/` folder |
 | `--pattern` | No | Vanilla siteswap pattern (e.g. `3`, `441`, `51`). If omitted, the tool attempts to auto-detect it. |
-| `--silence` | No | Duration of silence at the start of the recording in seconds (default: 5) |
+| `--silence` | No | Duration of "silence" (no juggling) at the start of the recording in seconds (default: 5) |
 
 **Example:**
 
